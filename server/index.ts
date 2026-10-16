@@ -12,7 +12,7 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
-interface Ev { name?: string; date?: string; hidden?: boolean; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
+interface Ev { startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -41,11 +41,12 @@ export default {
     const test = url.searchParams.get('test') === '1';
     try {
       if (url.pathname === '/events' && req.method === 'GET') {
-        // Public list: unfinished, unhidden events dated from (client-local "from", default now - 1 day) forward, soonest first.
+        // Public list: not-yet-started (lobby/upcoming), unfinished, unhidden events dated from (client-local "from", default now - 1 day) forward, soonest first.
         const from = (url.searchParams.get('from') || '').match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)?.[0] || new Date(Date.now() - 864e5).toISOString().slice(0, 16);
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds
           from events where coalesce((data->>'finished')::boolean,false)=false and (coalesce((data->>'hidden')::boolean,false)=false or $2)
+            and jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))=0
             and data->>'date' >= $1 order by data->>'date' asc limit 50`, [from, test]);
         return j({ events: rows });
       }
@@ -70,6 +71,23 @@ export default {
       if (req.method === 'PUT') {
         const text = await req.text(); if (text.length > 1_000_000) return j({ error: 'too large' }, 413);
         const body = JSON.parse(text);
+        const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as Ev | undefined;
+        if (cur && (cur.rounds || []).length > 0 && body.data) {
+          // Started: Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
+          if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
+          if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
+          // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance.
+          for (const f of ['date', 'courts', 'format', 'seeding', 'balanceDupr'] as const)
+            if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
+          for (const f of ['startedAt', 'startedBy', 'host'] as const) if (cur[f] !== undefined) body.data[f] = cur[f];
+        }
+        // Once a game has started (has rounds) nobody new can join via the public link; organizer roster edits (?org=1) still allowed.
+        if (url.searchParams.get('org') !== '1') {
+          if (cur && (cur.rounds || []).length > 0) {
+            const known = new Set((cur.players || []).map(p => p.id));
+            if ((body.data?.players || []).some((p: { id: string }) => !known.has(p.id))) return j({ error: 'started' }, 409);
+          }
+        }
         const { rows } = await pool.query('insert into events(code,data) values($1,$2) on conflict(code) do update set data=excluded.data, version=events.version+1, updated_at=now() returning version, updated_at', [code, JSON.stringify(body.data)]);
         let stats = 'ok'; try { await syncStats(code, body.data || {}); } catch (e) { stats = String(e); }
         return j({ ...rows[0], stats });

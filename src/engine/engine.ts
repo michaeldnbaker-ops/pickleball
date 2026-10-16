@@ -9,6 +9,7 @@ export interface EventT {
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
   rounds: Round[]; createdAt: number; finished?: boolean; hidden?: boolean;
+  startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
 export type Rng = () => number;

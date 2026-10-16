@@ -224,7 +224,8 @@ test('landing, Join list + empty state (mocked), time wheel', async ({ page }) =
   await page.goto(BASE);
   await expect(page.locator('.landBtns button')).toHaveCount(2); await expect(page.getByRole('heading', { name: 'Stone Creek Pickleball' })).toBeVisible(); await expect(page).toHaveTitle('Stone Creek Pickleball');
   await expect(page.getByRole('button', { name: 'Create a game' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Join a game' })).toBeVisible();
-  await expect(page.locator('.logo svg[aria-label="Pickleball"]')).toBeVisible();
+  await expect(page.locator('.logo img.fullLogo')).toBeVisible(); expect(await page.locator('.logo img.fullLogo').evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(500);
+  await page.screenshot({ path: 'e2e/shot-brand-landing.png' });
   expect(await page.evaluate(() => document.body.innerText.includes('🏓'))).toBe(false);
   await page.screenshot({ path: 'e2e/shot-landing.png' });
   const now = new Date(); const at = (addDays: number, h: number, m: number) => { const d = new Date(now); d.setDate(d.getDate() + addDays); d.setHours(h, m, 0, 0); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -278,19 +279,33 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await expect(p2.getByText('Hi, ' + names[9])).toBeVisible();
   await page.getByLabel('Refresh').click(); await expect(page.getByRole('heading', { name: 'Round 1 of 2' })).toBeVisible();
   await expect(page.locator('.match')).toHaveCount(2); await expect(page.locator('.byeNames')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-brand-round.png' });
+  // Start is one-time: whoever tapped it is the host (organizer on their phone); no Start button anywhere after
+  expect(await p2.evaluate(c => localStorage.getItem('pb:org:' + c), code)).toBe('1');
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toHaveCount(0); await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toHaveCount(0);
   // after the start: game drops off the public Join list, the link shows "already started", and the API refuses new players
-  const p3 = await ctx.newPage(); await p3.goto(BASE + '#/e/' + code + '/join'); await p3.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p3.reload();
+  const p3 = await ctx.newPage(); await p3.goto(BASE + '#/e/' + code + '/join'); await p3.evaluate(c => { localStorage.removeItem('pb:me:' + c); localStorage.removeItem('pb:org:' + c); }, code); await p3.reload();
   await expect(p3.getByText('This game already started')).toBeVisible(); await expect(p3.getByText('Add yourself to this game')).toHaveCount(0);
   await p3.screenshot({ path: 'e2e/shot-started.png' });
   const listed = await (await p3.request.get(API + '/events?test=1&from=2000-01-01T00:00')).json(); expect(listed.events.map((e: { code: string }) => e.code)).not.toContain(code);
   const cur = (await (await p3.request.get(API + '/e/' + code)).json()).data;
   const bad = await p3.request.put(API + '/e/' + code, { data: { data: { ...cur, players: [...cur.players, { id: 'x' + tag, name: 'Sneak-' + tag }], active: [...cur.active, 'x' + tag] } } }); expect(bad.status()).toBe(409);
+  expect(cur.startedAt).toBeTruthy(); expect(cur.host).toBeTruthy();
+  // API: a second start / re-draw is refused and returns the existing game; setup fields are locked after the start
+  const again = await p3.request.put(API + '/e/' + code, { data: { data: { ...cur, startedAt: cur.startedAt + 1, rounds: [{ ...cur.rounds[0], matches: [] }] } } });
+  expect(again.status()).toBe(409); expect((await again.json()).data.startedAt).toBe(cur.startedAt);
+  for (const ch of [{ courts: cur.courts + 1 }, { date: '2030-01-01T09:00' }, { format: 'kotc' }]) { const r = await p3.request.put(API + '/e/' + code, { data: { data: { ...cur, ...ch } } }); expect(r.status()).toBe(409); expect((await r.json()).error).toBe('locked'); }
+  const after = (await (await p3.request.get(API + '/e/' + code)).json()).data; expect(JSON.stringify(after.rounds[0])).toBe(JSON.stringify(cur.rounds[0])); expect(after.courts).toBe(cur.courts);
   // an existing player can still tap their name and get back in
   await p3.getByRole('button', { name: names[0], exact: true }).click(); await expect(p3.getByText('Hi, ' + names[0])).toBeVisible();
   // organizer can still add a late player from Manage
   await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByLabel('Player name').fill('Late-' + tag); await page.getByRole('button', { name: 'Add late player' }).click();
   await expect(page.getByText('Late-' + tag).first()).toBeVisible(); await page.waitForTimeout(1500);
   expect(JSON.stringify((await (await p3.request.get(API + '/e/' + code)).json()).data.players)).toContain('Late-' + tag);
+  // setup is locked in Manage: no courts stepper / re-draw / DUPR toggle, short note instead; drop + end early remain
+  await expect(page.getByText('Locked: game started')).toBeVisible(); await expect(page.getByRole('button', { name: /Re-draw/ })).toHaveCount(0); await expect(page.getByText('Balance by DUPR')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Drop player/ })).toBeVisible(); await expect(page.getByRole('button', { name: /End early/ })).toBeVisible();
+  await page.getByText('Locked: game started').scrollIntoViewIfNeeded(); await page.screenshot({ path: 'e2e/shot-locked-settings.png' });
   await page.getByRole('button', { name: 'Courts', exact: true }).click();
   // score round 1, advance, score round 2 → last-round options
   await page.getByLabel('Refresh').click();
@@ -362,11 +377,12 @@ test('Mixed Doubles: organizer sets pairs in the lobby, pairs stay together', as
 test('icons: manifest, favicon and apple-touch-icon load', async ({ page, request }) => {
   await page.goto(BASE);
   const href = (sel: string) => page.locator(sel).getAttribute('href');
-  for (const h of [await href('link[rel="apple-touch-icon"]'), await href('link[rel="icon"][type="image/svg+xml"]'), await href('link[rel="manifest"]'), 'icon-192.png', 'icon-512.png']) {
+  for (const h of [await href('link[rel="apple-touch-icon"]'), await href('link[rel="icon"][sizes="32x32"]'), 'icon-maskable-512.png', 'badge.webp', 'logo.webp', await href('link[rel="manifest"]'), 'icon-192.png', 'icon-512.png']) {
     const r = await request.get(new URL(h!, page.url()).toString()); expect(r.ok()).toBe(true);
   }
   const m = await (await request.get(new URL('manifest.webmanifest', page.url()).toString())).json(); expect(m.icons.map((i: { src: string }) => i.src)).toContain('icon-512.png');
-  await page.goto(new URL('icon-512.png', page.url()).toString()); await page.screenshot({ path: 'e2e/shot-icon-live.png' });
+  await page.goto(new URL('icon-512.png', page.url()).toString()); await page.screenshot({ path: 'e2e/shot-icon-new.png' });
+  expect(m.theme_color).toBe('#141929'); expect(m.icons.some((i: { purpose?: string }) => i.purpose === 'maskable')).toBe(true);
 });
 test('Share game: short /g/CODE link, native share, copy-link fallback, deep link → Add yourself', async ({ page, browser }) => {
   await page.addInitScript(() => { (window as unknown as { __shared: unknown[] }).__shared = []; Object.defineProperty(navigator, 'share', { configurable: true, value: async (d: unknown) => { (window as unknown as { __shared: unknown[] }).__shared.push(d); } }); });
@@ -397,7 +413,7 @@ test('Share game: short /g/CODE link, native share, copy-link fallback, deep lin
   await p2.keyboard.type('Sharer'); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible();
   // already-joined names are tappable below the form
   const p3 = await ctx.newPage(); await p3.goto(expected); await expect(p3.getByText("You're in as")).toBeVisible();
-  await p3.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p3.reload();
+  await p3.evaluate(c => { localStorage.removeItem('pb:me:' + c); localStorage.removeItem('pb:org:' + c); }, code); await p3.reload();
   await expect(p3.getByText('Already joined? Tap your name')).toBeVisible(); await p3.getByRole('button', { name: 'Sharer', exact: true }).click(); await expect(p3.getByText("You're in as")).toBeVisible();
   await p3.close();
   await p2.getByRole('button', { name: 'Start game', exact: true }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
