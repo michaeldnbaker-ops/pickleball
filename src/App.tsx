@@ -24,7 +24,8 @@ const ICONS: Record<string, string> = {
 /** Clean line icons (Stone Creek navy/blue via currentColor). */
 const Icon = ({ n, size = 20 }: { n: string; size?: number }) => <svg className="ico" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: ICONS[n] }} />;
 /** Short share link built from the current origin + app base, so it follows a custom domain automatically. */
-export function gameLink(code: string) { const p = location.pathname; const i = p.indexOf('/g/'); const base = i >= 0 ? p.slice(0, i + 1) : p.replace(/[^/]*$/, ''); return location.origin + base + 'g/' + code; }
+/** Shareable game link: a real page (HTTP 200) so iMessage/Facebook previews show the logo; opens straight to Add yourself. */
+export function gameLink(code: string) { const p = location.pathname; const i = p.indexOf('/g/'); const base = i >= 0 ? p.slice(0, i + 1) : p.replace(/[^/]*$/, ''); return location.origin + base + '?g=' + code; }
 const Logo = ({ size = 84 }: { size?: number }) => <img className="logoArt badge" src="./badge.webp" width={size} height={size} alt="Stone Creek" />;
 /** Small perforated pickleball glyph for buttons/tabs. */
 const Ball = () => <svg className="ballIcon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="#7CC242" stroke="#4E9A1E" strokeWidth="1.5" />{[[10, 10], [6, 7.5], [14, 7.5], [6, 12.5], [14, 12.5], [10, 4.5], [10, 15.5]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="1.3" fill="#2F6B12" />)}</svg>;

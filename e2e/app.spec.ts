@@ -223,7 +223,7 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
   // players sign up by name from the Join list
   const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p2 = await ctx.newPage();
-  await p2.goto(BASE + '#/join'); await expect(p2.getByText('Have a code or link?')).toHaveCount(0); await expect(p2.locator('#join-code')).toHaveCount(0); await p2.screenshot({ path: 'e2e/shot-join-nocode.png' }); await p2.goto(new URL('g/' + code, BASE).toString());
+  await p2.goto(BASE + '#/join'); await expect(p2.getByText('Have a code or link?')).toHaveCount(0); await expect(p2.locator('#join-code')).toHaveCount(0); await p2.screenshot({ path: 'e2e/shot-join-nocode.png' }); await p2.goto(new URL('?g=' + code, BASE).toString());
   await expect(p2.getByText('Add yourself to this game')).toBeVisible();
   const names = Array.from({ length: 12 }, (_, i) => `${['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'][i]}-${tag}`);
   const join = async (n: string, last: boolean) => { await p2.getByLabel('Player name').fill(n); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); if (!last) { await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible(); } };
@@ -366,12 +366,12 @@ test('icons: manifest, favicon and apple-touch-icon load', async ({ page, reques
   await page.goto(new URL('icon-512.png', page.url()).toString()); await page.screenshot({ path: 'e2e/shot-icon-new.png' });
   expect(m.theme_color).toBe('#141929'); expect(m.icons.some((i: { purpose?: string }) => i.purpose === 'maskable')).toBe(true);
 });
-test('Share game: short /g/CODE link, native share, copy-link fallback, deep link → Add yourself', async ({ page, browser }) => {
+test('Share game: short ?g=CODE link, native share, copy-link fallback, deep link → Add yourself', async ({ page, browser }) => {
   await page.addInitScript(() => { (window as unknown as { __shared: unknown[] }).__shared = []; Object.defineProperty(navigator, 'share', { configurable: true, value: async (d: unknown) => { (window as unknown as { __shared: unknown[] }).__shared.push(d); } }); });
   await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Share test'); await page.getByLabel('Place').fill('Stone Creek');
   await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
-  const expected = new URL('g/' + code, BASE).toString();
+  const expected = new URL('?g=' + code, BASE).toString();
   // lobby: native share sheet gets the short link
   await page.locator('.shareBig').click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __shared: { url: string }[] }).__shared.map(s => s.url))).toEqual([expected]);
