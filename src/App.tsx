@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { EventT, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent } from './engine/engine';
 import * as S from './store';
 
 const FORMATS: { id: Format; name: string; desc: string }[] = [
@@ -96,7 +96,7 @@ function NewEvent() {
     players.forEach(S.addToRoster);
     const code = S.newCode();
     const ev: EventT = { id: code, name, date, place, format, courts, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: makeTeams(players), rounds: [], createdAt: Date.now() };
-    ev.rounds.push(nextRound(ev));
+    ev.rounds.push(nextRound(ev)); ensurePlan(ev);
     S.saveLocal(code, ev, true);
     try { await S.pushRemote(code, ev); S.saveLocal(code, ev, false); } catch { /* will push later */ }
     go('e/' + code);
@@ -141,6 +141,7 @@ function EventView({ code }: { code: string }) {
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
   usePullToRefresh(refresh);
+  useEffect(() => { if (ev && !loading && ensurePlan(JSON.parse(JSON.stringify(ev)))) S.mutate(code, e => { ensurePlan(e); }, ev).then(r => setEv(r.ev)); }, [ev, loading, code]);
   const act = async (fn: (e: EventT) => void) => { if (!ev) return; const r = await S.mutate(code, fn, ev); setEv(r.ev); setOnline(r.online); setStamp(new Date()); };
   if (!ev) return <div className="page"><Header title="Event" back="" />{loading ? <p>Loading…</p> : <p>Event {code} not found{online ? '' : ' (offline)'}.</p>}</div>;
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
@@ -148,7 +149,7 @@ function EventView({ code }: { code: string }) {
     <header><button className="ghost" onClick={() => go('')}>‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : '⟳'}</button></header>
     <div className={'status ' + (online ? '' : 'off')}>{online ? (stamp ? 'Updated ' + stamp.toLocaleTimeString([], { timeStyle: 'short' }) + ' · pull down or tap ⟳ to refresh' : '') : 'Offline — changes saved on this phone, will upload when back online'}</div>
-    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} />}
+    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} />}
     {tab === 'me' && <Me ev={ev} code={code} nm={nm} act={act} />}
     {tab === 'schedule' && <Schedule ev={ev} nm={nm} act={act} />}
     {tab === 'standings' && <Standings ev={ev} />}
@@ -171,50 +172,75 @@ type Act = (fn: (e: EventT) => void) => Promise<void>;
 function currentRound(ev: EventT) { return ev.rounds[ev.rounds.length - 1]; }
 function roundLabel(ev: EventT, idx: number) { const r = ev.rounds[idx]; if (!r.playoff) return 'Round ' + r.n; const po = ev.rounds.filter(x => x.playoff); const left = po[po.indexOf(r)].matches.length; return left === 1 ? 'Final' : left === 2 ? 'Semifinals' : 'Quarterfinals'; }
 
-function Courts({ ev, act, nm }: { ev: EventT; act: Act; nm: (id: string) => string }) {
-  const idx = ev.rounds.length - 1; const r = currentRound(ev);
-  const regular = ev.rounds.filter(x => !x.playoff).length;
-  const done = r.matches.every(scored);
-  const isPO = !!r.playoff;
-  const advance = () => act(e => { if (isPO || e.rounds.filter(x => !x.playoff).length >= e.totalRounds) { const p = nextPlayoffRound(e); if (p) e.rounds.push(p); else e.finished = true; } else e.rounds.push(nextRound(e)); });
+type View = { kind: 'played'; idx: number; r: Round } | { kind: 'plan'; r: Round; n: number } | { kind: 'tbd'; n: number };
+function allViews(ev: EventT): View[] {
+  const v: View[] = ev.rounds.map((r, idx) => ({ kind: 'played', idx, r }));
+  if (ev.finished || ev.rounds.some(r => r.playoff)) return v;
+  const reg = ev.rounds.filter(r => !r.playoff).length;
+  (ev.plan || []).forEach((r, k) => v.push({ kind: 'plan', r, n: reg + k + 1 }));
+  for (let n = reg + (ev.plan?.length || 0) + 1; n <= ev.totalRounds; n++) v.push({ kind: 'tbd', n });
+  return v;
+}
+
+function Courts({ ev, act, nm, me }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string }) {
+  const views = allViews(ev); const curIdx = ev.rounds.length - 1;
+  const [sel, setSel] = useState(curIdx);
+  const lastCur = useRef(curIdx);
+  useEffect(() => { if (lastCur.current !== curIdx) { lastCur.current = curIdx; setSel(curIdx); } }, [curIdx]);
+  const vi = Math.min(Math.max(0, sel), views.length - 1); const v = views[vi];
   const [ask, setAsk] = useState(false);
-  const missing = unscoredCourts(r);
+  const r = currentRound(ev); const regular = ev.rounds.filter(x => !x.playoff).length; const isPO = !!r.playoff;
+  const missing = unscoredCourts(r); const done = missing.length === 0;
+  const advance = () => act(e => { if (isPO || e.rounds.filter(x => !x.playoff).length >= e.totalRounds) { delete e.plan; const p = nextPlayoffRound(e); if (p) e.rounds.push(p); else e.finished = true; } else takeNextRound(e); });
   const champion = ev.finished && isPO && r.matches.length === 1 && scored(r.matches[0]) ? (r.matches[0].sa! > r.matches[0].sb! ? r.matches[0].a : r.matches[0].b) : null;
-  if (!r) return null;
-  return <div>
-    <h2>{roundLabel(ev, idx)} {!isPO && <span className="muted">of {ev.totalRounds}</span>}</h2>
-    {champion && <div className="card champ">🏆 Champions: {champion.map(nm).join(' & ')}</div>}
-    {ev.finished && !champion && <div className="card champ">🏁 Event finished — see Standings</div>}
-    {r.matches.map((m, i) => <MatchCard key={idx + '-' + i} m={m} nm={nm} onScore={(a, b) => act(e => { const mm = e.rounds[idx].matches[i]; mm.sa = a; mm.sb = b; })} />)}
-    {r.byes.length > 0 && <div className="card bye">Sitting out: <b>{r.byes.map(nm).join(', ')}</b></div>}
-    {!ev.finished && <button className={'big ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>
-      {isPO ? (r.matches.length === 1 ? 'Finish event' : 'Next playoff round ›') : regular >= ev.totalRounds ? 'Start playoffs / finish ›' : `Next: Round ${regular + 1} ›`}</button>}
+  const tx = useRef<number | null>(null);
+  const go2 = (d: number) => setSel(Math.min(Math.max(0, vi + d), views.length - 1));
+  const title = v.kind === 'played' ? roundLabel(ev, v.idx) : 'Round ' + v.n;
+  const showOf = v.kind !== 'played' || !v.r.playoff;
+  const state = (x: View, i: number) => i === curIdx ? 'cur' : x.kind === 'played' ? (x.r.matches.every(scored) ? 'done' : 'part') : 'up';
+  const nextLabel = isPO ? (r.matches.length === 1 ? 'Finish event' : 'Next playoff round →') : regular >= ev.totalRounds ? 'Start playoffs / finish →' : `Next: Round ${regular + 1} →`;
+  return <div onTouchStart={e => { tx.current = e.touches[0].clientX; }} onTouchEnd={e => { if (tx.current == null) return; const dx = e.changedTouches[0].clientX - tx.current; tx.current = null; if (Math.abs(dx) > 60) go2(dx < 0 ? 1 : -1); }}>
+    <div className="strip" role="tablist" aria-label="Rounds">{views.map((x, i) => <button key={i} role="tab" aria-selected={i === vi} aria-label={(x.kind === 'played' ? roundLabel(ev, x.idx) : 'Round ' + x.n) + ' ' + ({ cur: 'current', done: 'scored', part: 'partly scored', up: 'upcoming' } as Record<string, string>)[state(x, i)]} className={'dot ' + state(x, i) + (i === vi ? ' viewing' : '')} onClick={() => setSel(i)}>{x.kind === 'played' && x.r.playoff ? (roundLabel(ev, x.idx)[0]) : (x.kind === 'played' ? x.r.n : x.n)}{x.kind === 'played' && x.r.matches.every(scored) && <i>✓</i>}</button>)}</div>
+    <div className="roundNav"><button className="arrow" aria-label="Previous round" disabled={vi === 0} onClick={() => go2(-1)}>‹</button>
+      <div className="rtitle"><h2>{title} {showOf && <span className="muted">of {ev.totalRounds}</span>}</h2><div className="small muted">{vi === curIdx ? (ev.finished ? 'Final round' : 'Now playing') : v.kind === 'played' ? 'Earlier round' : v.kind === 'plan' ? 'Upcoming · preview' : 'Upcoming'}</div></div>
+      <button className="arrow" aria-label="Next round" disabled={vi >= views.length - 1} onClick={() => go2(1)}>›</button></div>
+    {vi === curIdx && champion && <div className="card champ">🏆 Champions: {champion.map(nm).join(' & ')}</div>}
+    {vi === curIdx && ev.finished && !champion && <div className="card champ">🏁 Event finished — see Standings</div>}
+    {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
+      {v.kind === 'plan' && <p className="muted small">Preview — these pairings are already drawn. They only change if players or courts change.</p>}
+      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} onScore={v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : undefined} />)}
+      {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(nm).join(' · ')}</div></div>}</>}
+    {vi === curIdx && !ev.finished && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
+    {vi !== curIdx && <button className="big" onClick={() => setSel(curIdx)}>Back to current round</button>}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="unsc-t" onClick={e => e.stopPropagation()}>
       <h2 id="unsc-t">⚠️ {missing.length === 1 ? '1 court has' : missing.length + ' courts have'} no score</h2>
       <p>Court {missing.join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
       <button className="big primary" onClick={() => setAsk(false)}>Go back and enter scores</button>
       <button className="big danger" onClick={() => { setAsk(false); advance(); }}>Continue anyway</button></div></div>}
-    {!ev.finished && !isPO && regular >= ev.totalRounds && <button className="big" onClick={() => act(e => { e.finished = true; })}>Finish without playoffs</button>}
+    {vi === curIdx && !ev.finished && !isPO && regular >= ev.totalRounds && <button className="big" onClick={() => act(e => { e.finished = true; })}>Finish without playoffs</button>}
   </div>;
 }
 
-function MatchCard({ m, nm, onScore, me }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string }) {
+function CourtCard({ m, nm, onScore, me, label, compact }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean }) {
   const [a, setA] = useState<number | ''>(m.sa ?? ''); const [b, setB] = useState<number | ''>(m.sb ?? '');
   useEffect(() => { setA(m.sa ?? ''); setB(m.sb ?? ''); }, [m.sa, m.sb]);
   const [edit, setEdit] = useState(false);
   const has = m.sa != null && m.sb != null; const winA = has && m.sa! > m.sb!;
-  const team = (t: string[], win: boolean) => <div className={'team ' + (has ? (win ? 'win' : 'lose') : '')}>{t.map(p => <div key={p} className={p === me ? 'meName' : ''}>{nm(p)}</div>)}</div>;
-  return <div className="card match">
-    <div className="court">Court {m.court}</div>
-    <div className="vs">{team(m.a, winA)}<div className="score">{has && !edit ? <b>{m.sa}–{m.sb}</b> : 'vs'}</div>{team(m.b, has && !winA)}</div>
-    {onScore && (!has || edit ? <div className="entry">
-      <ScoreBox v={a} set={setA} /><span>–</span><ScoreBox v={b} set={setB} />
-      <button className="primary" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save</button>
-    </div> : <button className="ghost small" onClick={() => setEdit(true)}>Edit score</button>)}
+  const mine = !!me && (m.a.includes(me) || m.b.includes(me));
+  const entering = !!onScore && (!has || edit);
+  const side = (t: string[], v: number | '', set: (n: number | '') => void, pts: number | undefined, win: boolean, tag: string) => <div className={'side ' + (has && !entering ? (win ? 'win' : 'lose') : '') + (me && t.includes(me) ? ' myside' : '')}>
+    <div className="names" aria-label={'Team ' + tag}>{t.map(p => <div key={p} className={p === me ? 'meName' : ''}>{nm(p)}</div>)}</div>
+    {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
+  </div>;
+  return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
+    <div className="courtHead"><span className="court">{label ?? 'Court ' + m.court}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
+    {side(m.a, a, setA, m.sa, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, has && !winA, 'B')}
+    {onScore && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
+      : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
   </div>;
 }
-function ScoreBox({ v, set }: { v: number | ''; set: (n: number | '') => void }) {
-  return <div className="scorebox"><button aria-label="minus" onClick={() => set(Math.max(0, (v || 0) - 1))}>−</button><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label="Score" placeholder="0" onFocus={e => e.target.select()} value={v} onChange={e => set(e.target.value === '' ? '' : Math.min(99, Number(e.target.value.replace(/\D/g, ''))))} /><button aria-label="plus" onClick={() => set(Math.min(99, (v || 0) + 1))}>+</button></div>;
+function ScoreBox({ v, set, label = 'Score' }: { v: number | ''; set: (n: number | '') => void; label?: string }) {
+  return <div className="scorebox"><button aria-label="minus" onClick={() => set(Math.max(0, (v || 0) - 1))}>−</button><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={label} placeholder="0" onFocus={e => e.target.select()} value={v} onChange={e => set(e.target.value === '' ? '' : Math.min(99, Number(e.target.value.replace(/\D/g, ''))))} /><button aria-label="plus" onClick={() => set(Math.min(99, (v || 0) + 1))}>+</button></div>;
 }
 
 function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) => string; act: Act }) {
@@ -240,14 +266,15 @@ function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) 
       <div>vs <b>{opps(cur.m).map(nm).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
     <h2>Your games</h2>
-    {mine.map(({ i, m, bye }) => m ? <div key={i}><div className="muted small">{roundLabel(ev, i)}</div><MatchCard m={m} nm={nm} me={me} /></div> : bye ? <div key={i} className="muted small">{roundLabel(ev, i)}: sat out</div> : null)}
+    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + m.court} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
+    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + m.court + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
 
 function Schedule({ ev, nm, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
   return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <MatchCard key={j} m={m} nm={nm} onScore={(a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} onScore={(a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
     {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(nm).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
@@ -278,13 +305,13 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     {ev.players.map(p => { const on = ev.active.includes(p.id); return <div key={p.id} className="card row between"><span className={on ? '' : 'muted'}><b>{p.name}</b> {p.dupr ? 'DUPR ' + p.dupr : ''} {p.gender || ''}{on ? '' : ' — out'}</span>
       <button className={on ? 'ghost danger' : 'ghost'} onClick={() => act(e => { e.active = on ? e.active.filter(x => x !== p.id) : [...e.active, p.id]; })}>{on ? 'Remove' : 'Return'}</button></div>; })}
     <p className="muted small">Changes apply from the next round. Past scores are kept.{regen ? ' The current round has no scores yet, so you can re-draw it now.' : ''}</p>
-    {regen && <button className="big" onClick={() => act(e => { e.rounds.pop(); e.rounds.push(nextRound(e)); })}>🔀 Re-draw current round</button>}
+    {regen && <button className="big" onClick={() => act(e => { e.rounds.pop(); e.rounds.push(nextRound(e)); delete e.plan; ensurePlan(e); })}>🔀 Re-draw current round</button>}
     <h2>Settings</h2>
     <label>Courts</label><Stepper value={ev.courts} min={1} max={30} onChange={n => act(e => { e.courts = n; })} />
     <label>Total rounds</label><Stepper value={ev.totalRounds} min={Math.max(1, ev.rounds.filter(r => !r.playoff).length)} max={60} onChange={n => act(e => { e.totalRounds = n; e.finished = false; })} />
     <label className="row check"><input type="checkbox" checked={ev.balanceDupr} onChange={x => act(e => { e.balanceDupr = x.target.checked; })} /> Balance by DUPR</label>
     <button className="big" onClick={download}>⬇️ Export scores (CSV)</button>
-    <button className="big" onClick={() => { const code2 = S.newCode(); const copy: EventT = { ...JSON.parse(JSON.stringify(ev)), id: code2, rounds: [], finished: false, date: localISO(), createdAt: Date.now() }; copy.rounds.push(nextRound(copy)); S.saveLocal(code2, copy, true); S.pushRemote(code2, copy).then(() => S.saveLocal(code2, copy, false)).catch(() => {}); go('e/' + code2); }}>📄 Duplicate as new event</button>
+    <button className="big" onClick={() => { const code2 = S.newCode(); const copy: EventT = { ...JSON.parse(JSON.stringify(ev)), id: code2, rounds: [], finished: false, date: localISO(), createdAt: Date.now() }; delete copy.plan; copy.rounds.push(nextRound(copy)); ensurePlan(copy); S.saveLocal(code2, copy, true); S.pushRemote(code2, copy).then(() => S.saveLocal(code2, copy, false)).catch(() => {}); go('e/' + code2); }}>📄 Duplicate as new event</button>
     <button className="big danger" onClick={() => confirm('Remove from this phone? (Others with the link keep it.)') && (S.forget(code), go(''))}>Remove from my list</button>
   </div>;
 }

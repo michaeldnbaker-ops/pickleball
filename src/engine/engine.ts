@@ -10,6 +10,7 @@ export interface EventT {
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
   rounds: Round[]; createdAt: number; finished?: boolean;
+  plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
 export type Rng = () => number;
 export function mulberry(seed: number): Rng {
@@ -214,4 +215,25 @@ export function toCSV(ev: EventT) {
   const rows = [['Round', 'Court', 'Team A', 'Team B', 'Score A', 'Score B']];
   for (const r of ev.rounds) for (const m of r.matches) rows.push([String(r.playoff ? 'Playoff ' + r.n : r.n), String(m.court), m.a.map(nm).join(' & '), m.b.map(nm).join(' & '), String(m.sa ?? ''), String(m.sb ?? '')]);
   return rows.map(r => r.map(x => '"' + x.replace(/"/g, '""') + '"').join(',')).join('\n');
+}
+
+/** Formats whose pairings depend on results can't be drawn ahead. */
+export const resultDependent = (f: Format) => f === 'kotc' || f === 'ladder';
+const planKeyOf = (ev: EventT) => [ev.format, ev.courts, ev.totalRounds, ev.balanceDupr, [...ev.active].sort().join(','), ev.teams.map(t => t.join('+')).join('|'), ev.rounds.filter(r => !r.playoff).length].join(';');
+/** Ensure ev.plan holds the remaining regular rounds (drawn now, so players can see them ahead). Idempotent. */
+export function ensurePlan(ev: EventT, rng: Rng = Math.random): boolean {
+  if (resultDependent(ev.format) || ev.finished || ev.rounds.some(r => r.playoff)) { const had = !!ev.plan; delete ev.plan; delete ev.planKey; return had; }
+  const key = planKeyOf(ev); if (ev.plan && ev.planKey === key) return false;
+  const sim: EventT = JSON.parse(JSON.stringify({ ...ev, plan: undefined })); const plan: Round[] = [];
+  while (sim.rounds.filter(r => !r.playoff).length < sim.totalRounds) { const r = nextRound(sim, rng); sim.rounds.push(r); plan.push(JSON.parse(JSON.stringify(r))); }
+  ev.plan = plan; ev.planKey = key; return true;
+}
+/** Advance to the next regular round, using the pre-drawn plan when still valid. */
+export function takeNextRound(ev: EventT, rng: Rng = Math.random): Round {
+  ensurePlan(ev, rng);
+  const fromPlan = ev.plan?.[0];
+  const r = fromPlan ?? nextRound(ev, rng);
+  ev.rounds.push(r);
+  if (fromPlan) { ev.plan = ev.plan!.slice(1); ev.planKey = planKeyOf(ev); } else { delete ev.plan; delete ev.planKey; ensurePlan(ev, rng); }
+  return r;
 }

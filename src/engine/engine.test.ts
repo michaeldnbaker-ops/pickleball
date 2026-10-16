@@ -107,3 +107,22 @@ describe('unscoredCourts (advance warning)', () => {
   it('empty when all scored', () => { expect(uc(R([{ sa: 11, sb: 9 }, { sa: 2, sb: 11 }]))).toEqual([]); });
   it('handles missing round', () => { expect(uc(undefined)).toEqual([]); });
 });
+
+import { ensurePlan, takeNextRound } from './engine';
+describe('pre-drawn plan', () => {
+  const mk = (format: Format): EventT => { const players = Array.from({ length: 10 }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts: 2, totalRounds: 5, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
+  it('previewed rounds are exactly the rounds that get played', () => {
+    const ev = mk('rotating'); const rng = mulberry(3); takeNextRound(ev, rng);
+    expect(ev.plan!.length).toBe(4);
+    const preview = JSON.stringify(ev.plan!.map(r => r.matches.map(m => [m.a, m.b])));
+    ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 4; });
+    while (ev.rounds.length < 5) takeNextRound(ev, rng);
+    expect(JSON.stringify(ev.rounds.slice(1).map(r => r.matches.map(m => [m.a, m.b])))).toBe(preview);
+    expect(ev.plan).toEqual([]);
+  });
+  it('redraws plan when roster changes', () => {
+    const ev = mk('rotating'); takeNextRound(ev, mulberry(1)); ev.active = ev.active.filter(p => p !== 'p0');
+    expect(ensurePlan(ev, mulberry(2))).toBe(true); expect(ev.plan!.flatMap(r => r.matches.flatMap(m => [...m.a, ...m.b]))).not.toContain('p0');
+  });
+  it('no plan for result-dependent formats', () => { const ev = mk('kotc'); takeNextRound(ev, mulberry(1)); expect(ev.plan).toBeUndefined(); });
+});
