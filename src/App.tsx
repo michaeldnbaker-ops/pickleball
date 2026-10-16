@@ -99,7 +99,11 @@ function GameCard({ g, onClick }: { g: { code: string; name: string; date: strin
 function Join() {
   const [code, setCode] = useState(''); const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
   useEffect(() => { S.listEvents().then(setList).catch(() => setErr(true)); }, []);
-  const mine = S.myEvents().filter(e => !list?.some(l => l.code === e.code)).slice(0, 5);
+  // This phone's own recent games: only ones that still exist, aren't finished, and are today/upcoming (deleted/old ones drop off)
+  const [mineOk, setMineOk] = useState<Set<string>>(new Set());
+  useEffect(() => { const cut = Date.now() - 12 * 3600e3; const cands = S.myEvents().filter(e => +new Date(e.date) >= cut).slice(0, 8);
+    Promise.all(cands.map(e => S.fetchRemote(e.code).then(r => { if (!r) S.forget(e.code); return r && !r.finished ? e.code : null; }).catch(() => null))).then(c => setMineOk(new Set(c.filter(Boolean) as string[]))); }, []);
+  const mine = S.myEvents().filter(e => mineOk.has(e.code) && !list?.some(l => l.code === e.code)).slice(0, 5);
   return <div className="page"><Header title="Join a game" back="" />
     <h2>Upcoming games</h2>
     {list === null && !err && <p className="muted">Loading games…</p>}

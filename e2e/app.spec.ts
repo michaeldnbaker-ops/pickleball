@@ -445,3 +445,16 @@ test('typed-only scores: empty "–", number pad, auto-advance, any score (15–
   await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
   await expect(page.locator('.hist').first()).toContainText('15–13');
 });
+test('auto-cleanup: past never-started games leave Join at once and are deleted the next day', async ({ request }) => {
+  const ct = (ms: number) => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`; };
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const old = 'ZO' + tag, late = 'ZL' + tag, soon = 'ZS' + tag;
+  const mk = (code: string, date: string) => request.put(API + '/e/' + code, { data: { data: { id: code, name: 'e2e cleanup ' + code, date, place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), hidden: true } } });
+  expect((await mk(old, ct(Date.now() - 30 * 3600e3))).ok()).toBe(true); // yesterday (or earlier), never started
+  expect((await mk(soon, ct(Date.now() + 2 * 3600e3))).ok()).toBe(true); // upcoming
+  const lateDate = ct(Date.now() - 5 * 3600e3); const sameDay = lateDate.slice(0, 10) === ct(Date.now()).slice(0, 10);
+  if (sameDay) expect((await mk(late, lateDate)).ok()).toBe(true); // earlier today, start time long past
+  const codes = (await (await request.get(API + '/events?test=1&from=2000-01-01T00:00')).json()).events.map((e: { code: string }) => e.code);
+  expect(codes).not.toContain(old); expect(codes).toContain(soon); if (sameDay) expect(codes).not.toContain(late);
+  expect((await request.get(API + '/e/' + old)).status()).toBe(404); // purged
+  if (sameDay) expect((await request.get(API + '/e/' + late)).status()).toBe(200); // kept until tomorrow
+});
