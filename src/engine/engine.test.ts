@@ -126,3 +126,88 @@ describe('pre-drawn plan', () => {
   });
   it('no plan for result-dependent formats', () => { const ev = mk('kotc'); takeNextRound(ev, mulberry(1)); expect(ev.plan).toBeUndefined(); });
 });
+
+import { dropPlayer, dropImpact, readdPlayer, isLocked } from './engine';
+describe('drop player & play-ahead lock', () => {
+  const mk = (n: number, format: Format = 'rotating', courts = 2, totalRounds = 8): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts, totalRounds, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
+  const ids = (r: Round) => [...r.matches.flatMap(m => [...m.a, ...m.b]), ...r.byes];
+  const fairByes = (ev: EventT, from: number) => { // sitter's prior bye count never exceeds min of active players
+    const all = [...ev.rounds, ...(ev.plan || [])]; const cnt = new Map<string, number>();
+    all.forEach((r, i) => { if (i >= from) { const mx = Math.max(-1, ...r.byes.filter(b => ev.active.includes(b)).map(b => cnt.get(b) || 0)); for (const p of ev.active) if ((cnt.get(p) || 0) < mx) expect(r.byes).toContain(p); } r.byes.forEach(b => cnt.set(b, (cnt.get(b) || 0) + 1)); });
+  };
+  it('drop at 9 → 8: future rounds have no sit-outs and exclude the player; results kept', () => {
+    const ev = mk(9); const rng = mulberry(5); takeNextRound(ev, rng);
+    ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 6; });
+    const victim = ev.rounds[0].matches[0].a[0];
+    dropPlayer(ev, victim, { when: 'next' }, rng);
+    expect(ev.plan!.length).toBe(7); ev.plan!.forEach(r => { expect(ids(r)).not.toContain(victim); expect(r.byes).toEqual([]); expect(r.matches.length).toBe(2); });
+    expect(standings(ev).find(s => s.id === victim)!.w).toBe(1);
+  });
+  it('drop at 8 now with no sit-outs voids the short match; 7 left rotate byes fairly', () => {
+    const ev = mk(8); const rng = mulberry(7); takeNextRound(ev, rng);
+    const m = ev.rounds[0].matches[1]; const victim = m.b[1];
+    expect(dropImpact(ev, victim)).toEqual({ match: m, subs: [] });
+    dropPlayer(ev, victim, { when: 'now', fix: 'void' }, rng);
+    expect(ev.rounds[0].matches.length).toBe(1); expect(ev.rounds[0].byes.sort()).toEqual([...m.a, m.b[0]].sort());
+    ev.plan!.forEach(r => { expect(r.matches.length).toBe(1); expect(r.byes.length).toBe(3); expect(ids(r)).not.toContain(victim); });
+    fairByes(ev, 1);
+  });
+  it('drop at 5 now: replace with the sit-out; 4 left play every round', () => {
+    const ev = mk(5, 'rotating', 1); const rng = mulberry(9); takeNextRound(ev, rng);
+    const sub = ev.rounds[0].byes[0]; const victim = ev.rounds[0].matches[0].a[0];
+    expect(dropImpact(ev, victim).subs).toEqual([sub]);
+    dropPlayer(ev, victim, { when: 'now', fix: 'replace', sub }, rng);
+    expect(ev.rounds[0].matches[0].a).toContain(sub); expect(ev.rounds[0].byes).toEqual([]);
+    ev.plan!.forEach(r => { expect(r.byes).toEqual([]); expect(ids(r).sort()).toEqual(ev.active.slice().sort()); });
+  });
+  it('9 players: odd count byes spread evenly over the event', () => {
+    const ev = mk(10, 'rotating', 2, 9); const rng = mulberry(11); takeNextRound(ev, rng);
+    dropPlayer(ev, 'p3', { when: 'now', fix: 'void' }, rng); fairByes(ev, 1);
+  });
+  it('played-ahead rounds are locked: drop redraws only unscored future rounds', () => {
+    const ev = mk(10); const rng = mulberry(13); takeNextRound(ev, rng);
+    const ahead = ev.plan![2]; ahead.matches[0].sa = 11; ahead.matches[0].sb = 7; expect(isLocked(ahead)).toBe(true);
+    const locked = JSON.stringify(ahead.matches.map(m => [m.a, m.b]));
+    const victim = ev.active.find(p => !ids(ahead).slice(0, 4).includes(p) && ev.rounds[0].byes.includes(p)) || ev.rounds[0].byes[0];
+    dropPlayer(ev, victim, { when: 'next' }, rng);
+    expect(JSON.stringify(ev.plan![2].matches.map(m => [m.a, m.b]))).toBe(locked); expect(ev.plan![2].matches[0].sa).toBe(11);
+    [0, 1, 3, 4].forEach(k => expect(ids(ev.plan![k])).not.toContain(victim));
+    while (ev.rounds.length < 4) takeNextRound(ev, rng);
+    expect(JSON.stringify(ev.rounds[3].matches.map(m => [m.a, m.b]))).toBe(locked); expect(ev.rounds[3].matches[0].sa).toBe(11);
+  });
+  it('King of the Court / Ladder: drop now replaces, next rounds exclude; re-add returns', () => {
+    for (const f of ['kotc', 'ladder'] as Format[]) {
+      const ev = mk(9, f); const rng = mulberry(17); takeNextRound(ev, rng); expect(ev.plan).toBeUndefined();
+      const victim = ev.rounds[0].matches[0].b[0]; const sub = ev.rounds[0].byes[0];
+      dropPlayer(ev, victim, { when: 'now', fix: 'replace', sub }, rng);
+      ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 2; });
+      const r2 = takeNextRound(ev, rng); expect(ids(r2)).not.toContain(victim); expect(r2.byes).toEqual([]);
+      readdPlayer(ev, victim, rng); r2.matches.forEach(m => { m.sa = 11; m.sb = 5; });
+      expect(ids(takeNextRound(ev, rng))).toContain(victim);
+    }
+  });
+});
+
+import { startEvent, addRounds, endEvent } from './engine';
+describe('lobby start, any player count, extend/end', () => {
+  const mk = (n: number, format: Format = 'rotating', courts = 3, totalRounds = 6): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts, totalRounds, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
+  it('lobby has no rounds or plan until started', () => { const ev = mk(10); expect(ensurePlan(ev)).toBe(false); expect(ev.plan).toBeUndefined(); });
+  it.each([1, 3, 4, 5, 7, 10, 13, 17])('%i players: starts, fills courts 4 at a time, byes rotate evenly', n => {
+    const ev = mk(n); startEvent(ev, mulberry(n));
+    const all = [ev.rounds[0], ...ev.plan!]; expect(all.length).toBe(6);
+    const playing = Math.min(3, Math.floor(n / 4)) * 4;
+    const cnt = new Map<string, number>();
+    for (const r of all) { expect(r.matches.length).toBe(playing / 4); expect(r.byes.length).toBe(n - playing); r.byes.forEach(b => cnt.set(b, (cnt.get(b) || 0) + 1)); }
+    if (playing > 0 && n - playing > 0) { const v = ev.active.map(p => cnt.get(p) || 0); expect(Math.max(...v) - Math.min(...v)).toBeLessThanOrEqual(1); }
+  });
+  it('set partners with an odd count forms pairs and rotates the leftover', () => { const ev = mk(9, 'fixed', 2); startEvent(ev, mulberry(2)); expect(ev.teams.length).toBe(4); expect(ev.rounds[0].matches.length).toBe(2); expect(ev.rounds[0].byes.length).toBe(1); });
+  it('late joiner after start is slotted into upcoming rounds', () => {
+    const ev = mk(8, 'rotating', 2); startEvent(ev, mulberry(4)); ev.players.push({ id: 'late', name: 'Late' }); ev.active.push('late'); ensurePlan(ev, mulberry(5));
+    expect(ev.plan!.some(r => r.matches.some(m => [...m.a, ...m.b].includes('late')))).toBe(true);
+  });
+  it('add rounds at the last round, end early', () => {
+    const ev = mk(8, 'rotating', 2, 1); startEvent(ev, mulberry(6)); expect(ev.plan).toEqual([]);
+    addRounds(ev, 3, mulberry(7)); expect(ev.totalRounds).toBe(4); expect(ev.plan!.length).toBe(3);
+    endEvent(ev); expect(ev.finished).toBe(true); expect(ev.plan).toBeUndefined();
+  });
+});

@@ -44,3 +44,20 @@ export async function mutate(code: string, fn: (e: EventT) => void, current: Eve
   saveLocal(code, ev, true);
   try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch { return { ev, online: false }; }
 }
+
+export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number }
+/** Public upcoming/in-progress games, soonest first (hides events more than a day past). */
+export async function listEvents(): Promise<Listed[]> {
+  const d = new Date(Date.now() - 864e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  const r = await fetch(`${API}/events?from=${d.toISOString().slice(0, 16)}${testMode() ? '&test=1' : ''}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).events;
+}
+export const testMode = () => LS.getItem('pb:hidden') === '1';
+
+export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number }
+export interface StatMatch { id: string; code: string; ev_name: string; date: string; an: string[]; bn: string[]; sa: number; sb: number }
+const q = () => (testMode() ? '&test=1' : '');
+export async function statsBoard(): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
+export async function statsPlayer(name: string): Promise<StatMatch[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).matches; }
+export const isOrg = (code: string) => LS.getItem('pb:org:' + code) === '1';
+export const setOrg = (code: string) => LS.setItem('pb:org:' + code, '1');

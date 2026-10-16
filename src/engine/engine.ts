@@ -9,7 +9,7 @@ export interface EventT {
   courts: number; totalRounds: number; balanceDupr: boolean; seeding: 'random' | 'dupr';
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
-  rounds: Round[]; createdAt: number; finished?: boolean;
+  rounds: Round[]; createdAt: number; finished?: boolean; hidden?: boolean;
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
 export type Rng = () => number;
@@ -98,20 +98,22 @@ function unitRound(units: string[][], c: Ctx): [string[], string[]][] {
   void k; return best!.pairs;
 }
 
+function isLockedR(r: Round) { return r.matches.some(m => m.sa != null || m.sb != null); }
 export interface Standing { id: string; name: string; w: number; l: number; gp: number; pf: number; pa: number; diff: number; byes: number }
 export function standings(ev: EventT, includePlayoff = false): Standing[] {
   const map = new Map<string, Standing>();
   for (const p of ev.players) map.set(p.id, { id: p.id, name: p.name, w: 0, l: 0, gp: 0, pf: 0, pa: 0, diff: 0, byes: 0 });
-  for (const r of ev.rounds) {
+  for (const r of [...ev.rounds, ...(ev.plan || []).filter(isLockedR)]) { // played-ahead rounds count too
     if (r.playoff && !includePlayoff) continue;
-    for (const b of r.byes) { const s = map.get(b); if (s) s.byes++; }
+    if (ev.rounds.includes(r)) for (const b of r.byes) { const s = map.get(b); if (s) s.byes++; }
     for (const m of r.matches) {
       if (!scored(m)) continue;
       const add = (t: string[], f: number, a: number) => t.forEach(p => { const s = map.get(p); if (!s) return; s.gp++; s.pf += f; s.pa += a; s.diff += f - a; if (f > a) s.w++; else s.l++; });
       add(m.a, m.sa!, m.sb!); add(m.b, m.sb!, m.sa!);
     }
   }
-  return [...map.values()].filter(s => s.gp > 0 || ev.active.includes(s.id)).sort((x, y) => y.w - x.w || y.diff - x.diff || y.pf - x.pf || x.name.localeCompare(y.name));
+  const seen = new Set(ev.rounds.flatMap(r => [...r.byes, ...r.matches.flatMap(m => [...m.a, ...m.b])]));
+  return [...map.values()].filter(s => s.gp > 0 || ev.active.includes(s.id) || seen.has(s.id) || ev.rounds.length > 0).sort((x, y) => y.w - x.w || y.diff - x.diff || y.pf - x.pf || x.name.localeCompare(y.name));
 }
 export function teamStandings(ev: EventT) {
   const ind = new Map(standings(ev).map(s => [s.id, s]));
@@ -220,12 +222,20 @@ export function toCSV(ev: EventT) {
 /** Formats whose pairings depend on results can't be drawn ahead. */
 export const resultDependent = (f: Format) => f === 'kotc' || f === 'ladder';
 const planKeyOf = (ev: EventT) => [ev.format, ev.courts, ev.totalRounds, ev.balanceDupr, [...ev.active].sort().join(','), ev.teams.map(t => t.join('+')).join('|'), ev.rounds.filter(r => !r.playoff).length].join(';');
-/** Ensure ev.plan holds the remaining regular rounds (drawn now, so players can see them ahead). Idempotent. */
+/** A previewed round with any score entered is locked (played ahead) and never redrawn. */
+export const isLocked = (r: Round) => r.matches.some(m => m.sa != null || m.sb != null);
+/** Ensure ev.plan holds the remaining regular rounds (drawn now, so players can see and play them ahead). Locked rounds are kept. Idempotent. */
 export function ensurePlan(ev: EventT, rng: Rng = Math.random): boolean {
+  if (!ev.rounds.length) return false; // lobby: nothing drawn until the game starts
   if (resultDependent(ev.format) || ev.finished || ev.rounds.some(r => r.playoff)) { const had = !!ev.plan; delete ev.plan; delete ev.planKey; return had; }
   const key = planKeyOf(ev); if (ev.plan && ev.planKey === key) return false;
+  const old = ev.plan || [];
   const sim: EventT = JSON.parse(JSON.stringify({ ...ev, plan: undefined })); const plan: Round[] = [];
-  while (sim.rounds.filter(r => !r.playoff).length < sim.totalRounds) { const r = nextRound(sim, rng); sim.rounds.push(r); plan.push(JSON.parse(JSON.stringify(r))); }
+  for (let k = 0; sim.rounds.filter(r => !r.playoff).length < sim.totalRounds || (old[k] && isLocked(old[k])); k++) {
+    const n = sim.rounds.filter(r => !r.playoff).length + 1;
+    const r: Round = old[k] && isLocked(old[k]) ? { ...JSON.parse(JSON.stringify(old[k])), n } : nextRound(sim, rng);
+    sim.rounds.push(r); plan.push(JSON.parse(JSON.stringify(r)));
+  }
   ev.plan = plan; ev.planKey = key; return true;
 }
 /** Advance to the next regular round, using the pre-drawn plan when still valid. */
@@ -237,3 +247,50 @@ export function takeNextRound(ev: EventT, rng: Rng = Math.random): Round {
   if (fromPlan) { ev.plan = ev.plan!.slice(1); ev.planKey = planKeyOf(ev); } else { delete ev.plan; delete ev.planKey; ensurePlan(ev, rng); }
   return r;
 }
+
+/** The unscored current-round match a player is in (what a "drop now" leaves short). */
+export function dropImpact(ev: EventT, pid: string): { match: Match | null; subs: string[] } {
+  const r = ev.rounds[ev.rounds.length - 1];
+  if (!r || ev.finished) return { match: null, subs: [] };
+  const match = r.matches.find(m => !scored(m) && (m.a.includes(pid) || m.b.includes(pid))) || null;
+  return { match, subs: r.byes.filter(p => p !== pid && ev.active.includes(p)) };
+}
+export interface DropOpts { when: 'now' | 'next'; fix?: 'replace' | 'void'; sub?: string }
+/** Withdraw a player mid-event. Past results stay; unscored future rounds are redrawn. */
+export function dropPlayer(ev: EventT, pid: string, o: DropOpts, rng: Rng = Math.random) {
+  const r = ev.rounds[ev.rounds.length - 1];
+  if (o.when === 'now' && r && !ev.finished) {
+    const { match } = dropImpact(ev, pid);
+    r.byes = r.byes.filter(p => p !== pid);
+    if (match) {
+      if (o.fix === 'replace' && o.sub && r.byes.includes(o.sub)) {
+        const t = match.a.includes(pid) ? match.a : match.b; t[t.indexOf(pid)] = o.sub;
+        r.byes = r.byes.filter(p => p !== o.sub); delete match.sa; delete match.sb;
+      } else {
+        r.matches = r.matches.filter(m => m !== match);
+        r.byes.push(...[...match.a, ...match.b].filter(p => p !== pid));
+      }
+    }
+  }
+  ev.active = ev.active.filter(p => p !== pid);
+  ensurePlan(ev, rng);
+}
+/** Bring a withdrawn player back from the next round on. */
+export function readdPlayer(ev: EventT, pid: string, rng: Rng = Math.random) { if (!ev.active.includes(pid)) ev.active.push(pid); ensurePlan(ev, rng); }
+
+/** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. */
+export function startEvent(ev: EventT, rng: Rng = Math.random) {
+  if (ev.rounds.length) return;
+  const unit = ev.format === 'team' ? 4 : ev.format === 'fixed' ? 2 : 1;
+  if (unit > 1) {
+    const ps = ev.players.filter(p => ev.active.includes(p.id));
+    const order = ev.seeding === 'dupr' || ev.balanceDupr ? [...ps].sort((a, b) => (b.dupr ?? 3.5) - (a.dupr ?? 3.5)) : shuffle(ps, rng);
+    const nT = Math.floor(order.length / unit); const teams: string[][] = Array.from({ length: nT }, () => []);
+    order.slice(0, nT * unit).forEach((p, i) => { const r = Math.floor(i / nT), k = i % nT; teams[r % 2 ? nT - 1 - k : k].push(p.id); });
+    ev.teams = teams;
+  }
+  ev.rounds.push(nextRound(ev, rng)); ensurePlan(ev, rng);
+}
+/** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
+export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
+export function endEvent(ev: EventT) { ev.finished = true; delete ev.plan; delete ev.planKey; }
