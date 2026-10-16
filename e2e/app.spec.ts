@@ -5,7 +5,7 @@ const BASE = process.env.BASE || 'http://localhost:4173/';
 test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('pb:hidden', '1')); });
 const startGame = async (page: import('@playwright/test').Page) => {
   await page.getByRole('button', { name: 'Create game' }).click();
-  await page.getByRole('button', { name: '▶ Start game' }).click();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
 };
 test('organizer runs a round robin, player view sees it after refresh', async ({ page, browser }) => {
@@ -26,27 +26,27 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   for (let c = 0; c < 2; c++) { const card = page.locator('.match').nth(c); for (let k = 0; k < 11; k++) await card.locator('.scorebox').first().getByText('+').click(); await card.locator('.scorebox').nth(1).locator('input').fill(String(5 + c)); await card.getByText('Save').click(); await expect(page.locator('.match').nth(c).locator('.final')).toBeVisible(); if (c === 0) await page.waitForTimeout(300); }
   await page.getByRole('button', { name: /Next: Round 2/ }).click();
   await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
-  await page.getByText('🏆 Standings').click();
+  await page.getByRole('button', { name: 'Standings', exact: true }).click();
   await expect(page.locator('tbody tr')).toHaveCount(9);
   // player phone
   const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await ctx.addInitScript(() => localStorage.setItem('pb:hidden', '1')); const p2 = await ctx.newPage();
   await p2.goto(BASE + '#/e/' + code);
-  await p2.getByText('🙋 Me').click();
+  await p2.getByRole('button', { name: 'Me', exact: true }).click();
   await p2.getByRole('button', { name: 'Player3', exact: true }).click();
   await expect(p2.getByText('Hi, Player3')).toBeVisible();
   await expect(p2.locator('.next')).toBeVisible();
   // organizer adds late player; player refreshes and sees him
-  await page.getByText('⚙️ Manage').click();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByPlaceholder('Name').fill('Latecomer'); await page.getByText('Add late player').click();
   await expect(page.getByText('Latecomer').first()).toBeVisible();
   await page.waitForTimeout(1500);
   await p2.getByLabel('Refresh').click();
-  await p2.getByText('🏆 Standings').click();
+  await p2.getByRole('button', { name: 'Standings', exact: true }).click();
   await expect(p2.getByText('Latecomer')).toBeVisible();
   const box = await page.locator('.tabs button').first().boundingBox(); expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: 'e2e/shot-manage.png' });
   await page.locator('.tabs button').first().click(); await page.screenshot({ path: 'e2e/shot-courts.png' });
-  await p2.getByText('🙋 Me').click(); await p2.screenshot({ path: 'e2e/shot-me.png' });
+  await p2.getByRole('button', { name: 'Me', exact: true }).click(); await p2.screenshot({ path: 'e2e/shot-me.png' });
 });
 test('KOTC and playoffs reach a champion', async ({ page }) => {
   page.on('dialog', d => d.accept());
@@ -117,10 +117,11 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   await expect(page.locator('.card.bye')).toContainText('Sitting out');
   // pick Me = first player on court 1
   const meName = (await c1.locator('.side').first().locator('.names > div').first().textContent())!.trim();
-  await page.getByText('🙋 Me').click(); await page.getByRole('button', { name: meName, exact: true }).click();
+  await page.getByRole('button', { name: 'Me', exact: true }).click(); await page.getByRole('button', { name: meName, exact: true }).click();
   await page.locator('.tabs button').first().click();
   await expect(page.locator('.match.mine')).toHaveCount(1);
   await expect(page.locator('.match.mine .tag')).toHaveText('You & partner');
+  expect(await page.evaluate(() => /\p{Extended_Pictographic}/u.test(document.body.innerText))).toBe(false); // no emoji in UI
   await page.screenshot({ path: 'e2e/shot-round.png' });
   // preview a future round with arrows: drawn pairings visible, no score entry
   await page.getByLabel('Next round').click();
@@ -144,7 +145,7 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   await expect(page.getByRole('heading', { name: 'Round 2 of 6' })).toBeVisible(); await expect(page.getByText('Now playing')).toBeVisible();
   expect(await page.locator('.match .names').allTextContents()).toEqual(preview);
   // Me view: round-by-round mini cards incl. upcoming
-  await page.getByText('🙋 Me').click();
+  await page.getByRole('button', { name: 'Me', exact: true }).click();
   await expect(page.locator('.compact').first()).toBeVisible();
   expect(await page.locator('.compact').count()).toBe(6);
   await page.screenshot({ path: 'e2e/shot-me.png', fullPage: true });
@@ -166,13 +167,13 @@ test('play ahead locks a round; drop at 9 (replace) and 8 (void); re-add', async
   await page.locator('.strip .dot').nth(2).click(); await expect(page.getByRole('heading', { name: 'Round 3 of 6' })).toBeVisible();
   const r3 = await roundNames(page);
   const c = page.locator('.match').first(); await c.getByLabel('Team A score').fill('11'); await c.getByLabel('Team B score').fill('9'); await c.getByText('Save score').click();
-  await expect(page.getByText('Playing ahead · pairings locked 🔒')).toBeVisible(); await expect(c.locator('.final')).toBeVisible();
+  await expect(page.getByText(/Playing ahead · pairings locked/)).toBeVisible(); await expect(c.locator('.final')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-playahead.png' });
   await page.getByText('Back to current round').click();
   // drop at 9 from Manage: out now, replaced by the sit-out
   const sitter = (await page.locator('.byeNames').textContent())!.trim();
   const victim1 = (await page.locator('.match').first().locator('.nameBtn').first().textContent())!.trim();
-  await page.getByText('⚙️ Manage').click(); await page.getByText('🚑 Drop player').click();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByRole('button', { name: /Drop player/ }).click();
   const sheet = page.getByRole('dialog'); await sheet.getByRole('button', { name: victim1, exact: true }).click();
   await expect(sheet.getByText('Out now')).toBeVisible(); await expect(sheet.getByText('player short')).toBeVisible();
   await expect(sheet.getByRole('button', { name: sitter, exact: true })).toHaveClass(/on/);
@@ -194,10 +195,10 @@ test('play ahead locks a round; drop at 9 (replace) and 8 (void); re-add', async
   await page.screenshot({ path: 'e2e/shot-after-drop.png' });
   await page.getByLabel('Next round').click(); expect(await roundNames(page)).toBe(r3);
   // standings keep withdrawn player; re-add returns him to upcoming rounds
-  await page.getByText('🏆 Standings').click(); await expect(page.locator('tr', { hasText: victim1 }).locator('.wd')).toBeVisible();
-  await page.getByText('⚙️ Manage').click(); await page.locator('.card', { hasText: victim2 }).getByText('↩ Re-add').click();
+  await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('tr', { hasText: victim1 }).locator('.wd')).toBeVisible();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.locator('.card', { hasText: victim2 }).getByText('Re-add').click();
   await page.locator('.tabs button').first().click(); await page.getByLabel('Next round').click();
-  await page.getByText('🙋 Me').click(); await page.getByRole('button', { name: victim2, exact: true }).click();
+  await page.getByRole('button', { name: 'Me', exact: true }).click(); await page.getByRole('button', { name: victim2, exact: true }).click();
   await expect(page.locator('.compact', { hasText: 'upcoming' }).first()).toBeVisible();
 });
 test('drop at 5 on one court: from next round on, 4 left play every round', async ({ page }) => {
@@ -265,7 +266,7 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await expect(p2.getByText('10 joined')).toBeVisible();
   await p2.screenshot({ path: 'e2e/shot-lobby.png' });
   // a joined player (not the organizer) starts it, with a confirm step
-  await p2.getByRole('button', { name: '▶ Start game' }).click();
+  await p2.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(p2.getByRole('alertdialog')).toContainText('Start with 10 players?'); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   await expect(p2.getByText('Hi, ' + names[9])).toBeVisible();
   await page.getByLabel('Refresh').click(); await expect(page.getByRole('heading', { name: 'Round 1 of 2' })).toBeVisible();
@@ -286,9 +287,9 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   const c0 = page.locator('.match').first(); const winner = (await c0.locator('.side').first().locator('.nameBtn').first().textContent())!.trim();
   await c0.getByText('Edit score').click(); await c0.getByLabel('Team A score').fill('11'); await c0.getByLabel('Team B score').fill('9'); await c0.getByText('Save score').click(); await expect(c0.locator('.final')).toBeVisible();
   // End early from Manage
-  await page.getByText('⚙️ Manage').click(); page.once('dialog', d => d.accept()); await page.getByRole('button', { name: '🏁 End early' }).click();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click(); page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'End early' }).click();
   await page.locator('.tabs button').first().click(); await expect(page.getByText('Event finished')).toBeVisible();
-  await page.getByText('🏆 Standings').click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(4).textContent())!.trim();
+  await page.getByRole('button', { name: 'Standings', exact: true }).click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(4).textContent())!.trim();
   // all-time stats
   await page.goto(BASE + '#/stats'); const row = page.locator('tr', { hasText: winner });
   await expect(row).toBeVisible(); await expect(row.locator('td').nth(4)).toHaveText(gp); // same games as the event: edit updated, not duplicated
@@ -320,7 +321,7 @@ test('long names show fully; no M/F anywhere; DUPR optional', async ({ page }) =
   expect(await chip.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await expect(page.getByLabel('Player name')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-lobby-names.png', fullPage: true });
-  await page.getByRole('button', { name: '▶ Start game' }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   await expect(page.locator('.match')).toHaveCount(1);
   const all = page.locator('.match .names div, .byeNames'); await expect(page.locator('.match, .card.bye').filter({ hasText: long })).toHaveCount(1);
   for (const el of await all.all()) expect(await el.evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
@@ -336,7 +337,7 @@ test('Mixed Doubles: organizer sets pairs in the lobby, pairs stay together', as
   const pb = page.locator('.pairs'); await pb.getByRole('button', { name: 'Ann', exact: true }).click(); await pb.getByRole('button', { name: 'Dan', exact: true }).click();
   await expect(pb.locator('.pairRow')).toHaveText(/Ann & Dan/);
   await page.screenshot({ path: 'e2e/shot-mixed-pairs.png' });
-  await page.getByRole('button', { name: '▶ Start game' }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   const together = () => page.locator('.match .side .names').allTextContents().then(a => a.some(t => t.includes('Ann') && t.includes('Dan')));
   await expect(page.locator('.match')).toHaveCount(1); await expect.poll(together).toBe(true);
   await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible(); await expect.poll(together).toBe(true);
@@ -373,7 +374,7 @@ test('Share game: short /g/CODE link, native share, copy + QR fallback, deep lin
   await p2.goto(expected);
   await expect(p2).toHaveURL(new RegExp('#/e/' + code + '/join$')); await expect(p2.getByText('Who are you?')).toBeVisible();
   await p2.getByLabel('Player name').fill('Sharer'); await p2.getByText('Join this game').click();
-  await p2.getByRole('button', { name: '▶ Start game' }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await p2.getByRole('button', { name: 'Start game', exact: true }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   await p2.getByRole('button', { name: 'Share game' }).first().click();
   await expect(p2.getByRole('dialog', { name: 'Share game' }).getByTestId('share-link')).toHaveText(expected);
 });
