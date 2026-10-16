@@ -198,7 +198,7 @@ test('landing, Join list + empty state (mocked), time wheel', async ({ page }) =
   await page.reload(); await expect(page.getByText('No current games')).toBeVisible();
   expect(await page.evaluate(() => document.body.innerText.includes('🏓'))).toBe(false);
   await page.screenshot({ path: 'e2e/shot-join-empty.png' });
-  await page.locator('.empty').getByRole('button', { name: 'Create a game' }).click();
+  await expect(page.locator('.empty').getByRole('button')).toHaveCount(0); await page.locator('.createTop').click();
   // calendar + wheels
   await page.locator('.day:not([disabled])').last().click();
   await page.getByRole('listbox', { name: 'Hour' }).getByRole('option', { name: '6', exact: true }).click();
@@ -457,4 +457,22 @@ test('auto-cleanup: past never-started games leave Join at once and are deleted 
   expect(codes).not.toContain(old); expect(codes).toContain(soon); if (sameDay) expect(codes).not.toContain(late);
   expect((await request.get(API + '/e/' + old)).status()).toBe(404); // purged
   if (sameDay) expect((await request.get(API + '/e/' + late)).status()).toBe(200); // kept until tomorrow
+});
+test('Join flow: only Create + game list; pick a game → Join → enter name', async ({ page, browser }) => {
+  const tag = Math.random().toString(36).slice(2, 6);
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const code = 'JF' + tag.toUpperCase();
+  await page.request.put(API + '/e/' + code, { data: { data: { id: code, name: 'Flow test ' + tag, date: d, place: 'Stone Creek', format: 'rotating', courts: 2, totalRounds: 4, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), hidden: true } } });
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p = await ctx.newPage();
+  await p.goto(BASE + '#/join');
+  await expect(p.getByRole('button', { name: 'Create a game' })).toBeVisible();
+  await expect(p.getByText(/code or link|enter code/i)).toHaveCount(0); await expect(p.locator('input')).toHaveCount(0); await expect(p.getByText(/QR/)).toHaveCount(0);
+  const card = p.locator('.game', { hasText: 'Flow test ' + tag }); await expect(card).toBeVisible(); await expect(card.locator('.joinPill')).toHaveText('Join');
+  await card.scrollIntoViewIfNeeded(); await p.screenshot({ path: 'e2e/shot-flow-1-join-list.png' });
+  await card.click();
+  await expect(p.getByText('Add yourself to this game')).toBeVisible(); await expect(p.getByLabel('Player name')).toBeFocused();
+  await p.screenshot({ path: 'e2e/shot-flow-2-enter-name.png' });
+  await p.keyboard.type('Flow-' + tag); await p.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect(p.getByText("You're in as")).toBeVisible(); await expect(p.locator('.chip.static', { hasText: 'Flow-' + tag })).toBeVisible();
+  await p.screenshot({ path: 'e2e/shot-flow-3-joined.png' });
 });

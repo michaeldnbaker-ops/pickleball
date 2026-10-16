@@ -1,3 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-export default defineConfig({ base: './', plugins: [react()], test: { include: ['src/**/*.test.ts'] } } as never);
+import { writeFileSync } from 'node:fs';
+const BUILD = new Date().toISOString();
+const version = { name: 'version-json', closeBundle() { try { writeFileSync('dist/version.json', JSON.stringify({ build: BUILD })); } catch { /* test runs */ } } };
+export default defineConfig({ base: './', define: { __BUILD__: JSON.stringify(BUILD) }, plugins: [react(), version], test: { include: ['src/**/*.test.ts'] } } as never);

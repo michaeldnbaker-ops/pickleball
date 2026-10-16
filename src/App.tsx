@@ -86,31 +86,27 @@ function Past() {
 }
 
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
-function GameCard({ g, onClick }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number }; onClick: () => void }) {
+function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number }; onClick: () => void; join?: boolean }) {
   const w = fmtWhen(g.date); const live = (g.rounds ?? 0) > 0 && new Date(g.date) <= new Date();
   return <button className="card tap game" onClick={onClick}>
     <div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div>
     <div className="gInfo"><div className="gTime">{w.day} · {w.time}{live && <span className="live">In progress</span>}</div>
       <div className="gName">{g.name}</div>
       <div className="muted small">{g.place || 'Place TBA'}{g.players != null ? ` · ${g.players} players` : ''}</div></div>
-    <span className="chev" aria-hidden="true">›</span></button>;
+    {join ? <span className="joinPill">Join</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
 }
 
+/** Join: only "Create a game" and the list of upcoming games. Pick a game → Join → enter your name. */
 function Join() {
   const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
   useEffect(() => { S.listEvents().then(setList).catch(() => setErr(true)); }, []);
-  // This phone's own recent games: only ones that still exist, aren't finished, and are today/upcoming (deleted/old ones drop off)
-  const [mineOk, setMineOk] = useState<Set<string>>(new Set());
-  useEffect(() => { const cut = Date.now() - 12 * 3600e3; const cands = S.myEvents().filter(e => +new Date(e.date) >= cut).slice(0, 8);
-    Promise.all(cands.map(e => S.fetchRemote(e.code).then(r => { if (!r) S.forget(e.code); return r && !r.finished ? e.code : null; }).catch(() => null))).then(c => setMineOk(new Set(c.filter(Boolean) as string[]))); }, []);
-  const mine = S.myEvents().filter(e => mineOk.has(e.code) && !list?.some(l => l.code === e.code)).slice(0, 5);
   return <div className="page"><Header title="Join a game" back="" />
+    <button className="big primary createTop" onClick={() => go('new')}>Create a game</button>
     <h2>Upcoming games</h2>
     {list === null && !err && <p className="muted">Loading games…</p>}
-    {err && <p className="warn">Couldn't load the games list (offline?). Open the game link you were sent.</p>}
-    {list?.length === 0 && <div className="card empty"><div className="emptyIcon"><Logo size={72} /></div><b>No current games</b><p className="muted">Nobody has set up a game yet. Start one and share the link.</p><button className="big primary" onClick={() => go('new')}>Create a game</button></div>}
-    <div className="gameList">{list?.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code + '/join')} />)}</div>
-    {mine.length > 0 && <><h2>My recent games</h2>{mine.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code)} />)}</>}
+    {err && <p className="warn">Couldn't load the games list (offline?). Pull down to retry.</p>}
+    {list?.length === 0 && <div className="card empty"><div className="emptyIcon"><Logo size={72} /></div><b>No current games</b><p className="muted">Nobody has set up a game yet.</p></div>}
+    <div className="gameList">{list?.map(g => <GameCard key={g.code} g={g} join onClick={() => go('e/' + g.code + '/join')} />)}</div>
   </div>;
 }
 
