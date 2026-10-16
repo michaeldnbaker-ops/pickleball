@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 import { LOGO_SVG } from './logoSvg';
-import QRCode from 'qrcode';
 
 const ICONS: Record<string, string> = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
@@ -139,16 +138,16 @@ function Calendar({ value, onChange }: { value: string; onChange: (d: string) =>
     </div></div>;
 }
 
-function PlayerForm({ onAdd, label = 'Add' }: { onAdd: (p: Player) => void; label?: string }) {
+function PlayerForm({ onAdd, label = 'Add', autoFocus, big }: { onAdd: (p: Player) => void; label?: string; autoFocus?: boolean; big?: boolean }) {
   const [name, setName] = useState(''); const [dupr, setDupr] = useState('');
   const submit = () => { if (!name.trim()) return; const d = Number(dupr); onAdd({ id: S.uid(), name: name.trim(), dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined }); setName(''); setDupr(''); };
   const idp = useRef(S.uid()).current;
   return <div className="card pform">
     <label htmlFor={idp + '-n'}>Player name</label>
-    <input id={idp + '-n'} className="nameInput" placeholder="Full name" autoComplete="name" autoCapitalize="words" maxLength={40} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+    <input id={idp + '-n'} autoFocus={autoFocus} className="nameInput" placeholder="Full name" autoComplete="name" autoCapitalize="words" maxLength={40} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
     <div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
       <input id={idp + '-d'} className="duprInput" placeholder="e.g. 3.75" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, '').slice(0, 5))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
-    <button className="primary full" disabled={!name.trim()} onClick={submit}>{label}</button></div>;
+    <button className={'primary full' + (big ? ' big' : '')} disabled={!name.trim()} onClick={submit}>{label}</button></div>;
 }
 
 function Roster() {
@@ -342,11 +341,7 @@ function ScoreBox({ v, set, label = 'Score' }: { v: number | ''; set: (n: number
 function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) => string; act: Act }) {
   const [me, setMeS] = useState(S.getMe(code));
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
-  if (!me || !ev.players.some(p => p.id === me)) return <div><h2>Who are you?</h2>
-    <div className="chips">{[...ev.players].sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip big" onClick={() => pick(p.id)}>{p.name}</button>)}</div>
-    <h2>Not listed? Add yourself</h2>
-    <PlayerForm label="Join this event" onAdd={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} />
-  </div>;
+  if (!me || !ev.players.some(p => p.id === me)) return <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />;
   const mine = ev.rounds.map((r, i) => ({ r, i, m: r.matches.find(m => m.a.includes(me) || m.b.includes(me)), bye: r.byes.includes(me) }));
   const cur = mine[mine.length - 1];
   const st = standings(ev); const rank = st.findIndex(s => s.id === me);
@@ -395,7 +390,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
   const unit = unitSize(ev.format);
   const [dropping, setDropping] = useState<string | null>(null);
   return <div>
-    <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button><button onClick={() => setSharing(true)}>QR code</button></div></div>
+    <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {!ev.finished && <button className="big dropBig" onClick={() => setDropping('')}><Icon n="userMinus" /> Drop player (injured / left)</button>}
     {dropping !== null && <DropSheet ev={ev} act={act} nm={id => ev.players.find(p => p.id === id)?.name || '?'} pid={dropping || undefined} onClose={() => setDropping(null)} />}
@@ -461,15 +456,13 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts · {ev.totalRounds} rounds</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
     {canStart && <button className="big primary huge" onClick={() => setAsk(true)}><Icon n="play" /> Start game</button>}
-    {!me && <><h2>Who are you?</h2>
-      {joined.length > 0 && <div className="chips">{[...joined].sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip big" onClick={() => pick(p.id)}>{p.name}</button>)}</div>}
-      <PlayerForm label="Join this game" onAdd={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} /></>}
+    {!me && <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
     <div className="chips">{joined.map(p => <span key={p.id} className={'chip static' + (p.id === me ? ' on' : '')}>{p.name}</span>)}</div>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
-    <div className="row shareRow"><button className="big primary shareBig" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button><button className="big qrBtn" onClick={() => setSharing(true)}>QR</button></div>
+    <div className="row shareRow"><button className="big primary shareBig" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
@@ -516,24 +509,29 @@ function PairBuilder({ ev, act }: { ev: EventT; act: Act }) {
 }
 
 const ShareIcon = () => <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 8l5-5 5 5" /><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" /></svg>;
-/** Native share sheet first; fall back to the in-app sheet (copy link + QR) if unavailable or it fails. */
-async function shareGame(ev: EventT, code: string, fallback: () => void) {
-  const url = gameLink(code); const w = fmtWhen(ev.date);
-  const text = `${ev.name} — ${w.day} ${w.time}${ev.place ? ' at ' + ev.place : ''}. Tap to join:`;
-  if (navigator.share) { try { await navigator.share({ title: ev.name, text, url }); return; } catch (e) { if ((e as Error)?.name === 'AbortError') return; } }
+/** Native share sheet with just the link; fallback is a simple Copy link sheet. */
+async function shareGame(_ev: EventT, code: string, fallback: () => void) {
+  const url = gameLink(code);
+  if (navigator.share) { try { await navigator.share({ url }); return; } catch (e) { if ((e as Error)?.name === 'AbortError') return; } }
   fallback();
 }
-function ShareGame({ ev, code, onClose }: { ev: EventT; code: string; onClose: () => void }) {
-  const url = gameLink(code); const [qr, setQr] = useState(''); const [copied, setCopied] = useState(false);
-  useEffect(() => { QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M', color: { dark: '#0B2545', light: '#FFFFFF' } }).then(setQr).catch(() => setQr('')); }, [url]);
+function ShareGame({ code, onClose }: { ev?: EventT; code: string; onClose: () => void }) {
+  const url = gameLink(code); const [copied, setCopied] = useState(false);
   const copy = async () => { try { await navigator.clipboard.writeText(url); } catch { const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); } setCopied(true); };
   return <div className="sheetBg" onClick={onClose}><div className="sheet shareSheet" role="dialog" aria-modal="true" aria-labelledby="sh-t" onClick={e => e.stopPropagation()}>
     <h2 id="sh-t">Share game</h2>
-    <p className="muted">{ev.name} · code <b>{code}</b>. Friends open the link (or scan) and pick their name.</p>
-    <div className="qr" role="img" aria-label="QR code for the game link" dangerouslySetInnerHTML={{ __html: qr }} />
     <div className="linkBox" data-testid="share-link">{url}</div>
-    <button className="big primary" onClick={copy}>{copied ? '✓ Link copied' : 'Copy link'}</button>
-    {'share' in navigator && <button className="big" onClick={() => shareGame(ev, code, () => {})}>More sharing options…</button>}
+    <button className="big primary" onClick={copy}>{copied ? 'Link copied' : <><Icon n="copy" /> Copy link</>}</button>
     <button className="big" onClick={onClose}>Done</button>
   </div></div>;
+}
+
+/** Shared-link landing: add yourself first (name focused, optional DUPR, big Join); already-joined names below. */
+function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player) => void; onPick: (id: string) => void }) {
+  const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  return <div className="joinForm"><h2>Add yourself to this game</h2>
+    <PlayerForm autoFocus big label="Join" onAdd={onJoin} />
+    {joined.length > 0 && <><h3 className="small muted">Already joined? Tap your name</h3>
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
+  </div>;
 }

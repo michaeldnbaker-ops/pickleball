@@ -127,11 +127,11 @@ details{margin:8px 0}summary{font-size:1.05rem;font-weight:800;padding:12px 0;cu
 .pform label{margin:0 0 6px}.pform .nameInput{width:100%;font-size:1.15rem}
 .duprRow{display:flex;align-items:center;gap:10px;margin-top:10px}.duprRow label{margin:0;flex:1;font-size:.9rem}.duprInput{width:120px!important;flex:none;min-height:46px;padding:10px 12px}
 .logoArt{display:inline-block}.logoArt svg{width:100%;height:100%}.ballIcon{width:1.1em;height:1.1em;vertical-align:-.18em}
-.shareRow{gap:10px}.shareRow .qrBtn{flex:0 0 84px}.shareRow>button{margin:10px 0}
+.shareRow{gap:10px}.shareRow>button{margin:10px 0}
 .hdrShare{color:var(--fg);display:grid;place-items:center;min-width:44px}
-.qr{width:220px;height:220px;margin:8px auto 12px;padding:8px;background:#fff;border:1px solid var(--line);border-radius:12px}.qr svg{width:100%;height:100%}
 .linkBox{font-family:ui-monospace,Menlo,monospace;font-size:.95rem;background:var(--skySoft);border:1px solid var(--skyLt);border-radius:10px;padding:10px 12px;word-break:break-all;text-align:center}
 .ico{flex:none;vertical-align:-.2em;display:inline-block}.big .ico,.huge .ico,button .ico{margin-right:6px}
 .tabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}.tabs button .ico,.tabs .ballIcon{margin:0;width:22px;height:22px}
 .tabs button.on .ico{color:var(--skyText)}.youIn .ico{color:#2F6B12}[role=alertdialog] h2 .ico{color:var(--warn)}
 .hdrShare .ico,.refresh .ico{margin:0}
+.joinForm h2{margin-top:6px}.joinForm h3{margin:16px 0 8px;font-weight:700}
