@@ -229,13 +229,14 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   const join = async (n: string, last: boolean) => { await p2.getByLabel('Player name').fill(n); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); if (!last) { await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible(); } };
   for (const n of names.slice(0, 3)) await join(n, n === names[2]);
   // 3 players: Start is disabled with a clear message; the API refuses a start too
-  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need at least 4 players to start (have 3)')).toBeVisible();
+  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need 4, 8, 12 or 16 players to start (have 3)')).toBeVisible();
   await p2.screenshot({ path: 'e2e/shot-start-blocked.png' });
-  { const cur0 = (await (await p2.request.get(API + '/e/' + code)).json()).data; const r = await p2.request.put(API + '/e/' + code, { data: { data: { ...cur0, hidden: true, rounds: [{ n: 1, matches: [], byes: [] }] } } }); expect(r.status()).toBe(409); expect((await r.json()).error).toBe('need 4 players'); }
+  { const cur0 = (await (await p2.request.get(API + '/e/' + code)).json()).data; const r = await p2.request.put(API + '/e/' + code, { data: { data: { ...cur0, hidden: true, rounds: [{ n: 1, matches: [], byes: [] }] } } }); expect(r.status()).toBe(409); expect((await r.json()).error).toBe('need 4, 8, 12 or 16 players'); }
   await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible();
   for (const n of names.slice(3, 10)) await join(n, false);
-  // 11 players (not a multiple of 4) can start
-  await join(names[10], true); await expect(p2.getByText('11 joined')).toBeVisible(); await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  // 11 players: still blocked
+  await join(names[10], true); await expect(p2.getByText('11 joined')).toBeVisible(); await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need 4, 8, 12 or 16 players to start (have 11)')).toBeVisible();
+  await p2.screenshot({ path: 'e2e/shot-start-blocked-11.png' });
   await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible();
   await join(names[11], true);
   await expect(p2.getByText('12 joined')).toBeVisible();
@@ -398,7 +399,7 @@ test('Share game: short /g/CODE link, native share, copy-link fallback, deep lin
   await expect(p3.getByText('Already joined? Tap your name')).toBeVisible(); await p3.getByRole('button', { name: 'Sharer', exact: true }).click(); await expect(p3.getByText("You're in as")).toBeVisible();
   await p3.close();
   // 1 player: Start is disabled (needs 4, 8, 12 or 16)
-  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need at least 4 players to start (have 1)')).toBeVisible();
+  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need 4, 8, 12 or 16 players to start (have 1)')).toBeVisible();
   await p2.locator('.shareBig').click();
   await expect(p2.getByRole('dialog', { name: 'Share game' }).getByTestId('share-link')).toHaveText(expected);
 });
