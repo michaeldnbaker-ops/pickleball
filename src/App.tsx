@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const FORMATS: { id: Format; name: string; desc: string }[] = [
   { id: 'rotating', name: 'Round Robin', desc: 'Rotating partners — new partner every round, fewest repeats.' },
   { id: 'mixer', name: 'Mix-Up / Free-for-All', desc: 'Random social shuffle each round, byes kept fair.' },
-  { id: 'mixed', name: 'Mixed Doubles RR', desc: 'Rotating partners, each team one man + one woman.' },
+  { id: 'mixed', name: 'Mixed Doubles', desc: 'Organizer sets the pairs; pairs stay together and rotate opponents.' },
   { id: 'fixed', name: 'Set Partners RR', desc: 'Same partner all event, rotate opponents.' },
   { id: 'kotc', name: 'King of the Court', desc: 'Up & down the river: winners move up a court, losers down, partners split.' },
   { id: 'ladder', name: 'Ladder', desc: 'Courts re-seeded by standings each round: best 4 on Court 1.' },
   { id: 'team', name: 'Team Battle (4-player teams)', desc: 'MLP-style: teams of 4 play two doubles games per tie.' },
 ];
-const fmtName = (f: Format) => FORMATS.find(x => x.id === f)!.name;
+const fmtName = (f: Format) => (FORMATS.find(x => x.id === f) ?? FORMATS[0]).name; // legacy formats (e.g. old 'mixed') show as Round Robin
 
 function useRoute() {
   const [h, setH] = useState(location.hash);
@@ -111,14 +111,15 @@ function Calendar({ value, onChange }: { value: string; onChange: (d: string) =>
 }
 
 function PlayerForm({ onAdd, label = 'Add' }: { onAdd: (p: Player) => void; label?: string }) {
-  const [name, setName] = useState(''); const [dupr, setDupr] = useState(''); const [g, setG] = useState<'' | 'M' | 'F'>('');
-  const submit = () => { if (!name.trim()) return; onAdd({ id: S.uid(), name: name.trim(), dupr: dupr ? Number(dupr) : undefined, gender: g || undefined }); setName(''); setDupr(''); setG(''); };
+  const [name, setName] = useState(''); const [dupr, setDupr] = useState('');
+  const submit = () => { if (!name.trim()) return; const d = Number(dupr); onAdd({ id: S.uid(), name: name.trim(), dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined }); setName(''); setDupr(''); };
   const idp = useRef(S.uid()).current;
-  return <div className="card"><div className="row labels"><label htmlFor={idp + '-n'}>Player name</label><label htmlFor={idp + '-d'} className="narrow">DUPR</label><label htmlFor={idp + '-g'} className="narrow">M/F</label></div><div className="row">
-    <input id={idp + '-n'} placeholder="Name" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
-    <input id={idp + '-d'} className="narrow" placeholder="DUPR" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, ''))} />
-    <select id={idp + '-g'} className="narrow" value={g} onChange={e => setG(e.target.value as '')}><option value="">–</option><option value="M">M</option><option value="F">F</option></select>
-  </div><button className="primary full" onClick={submit}>{label}</button></div>;
+  return <div className="card pform">
+    <label htmlFor={idp + '-n'}>Player name</label>
+    <input id={idp + '-n'} className="nameInput" placeholder="Full name" autoComplete="name" autoCapitalize="words" maxLength={40} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+    <div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
+      <input id={idp + '-d'} className="duprInput" placeholder="e.g. 3.75" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, '').slice(0, 5))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
+    <button className="primary full" disabled={!name.trim()} onClick={submit}>{label}</button></div>;
 }
 
 function Roster() {
@@ -126,7 +127,7 @@ function Roster() {
   const save = (x: Player[]) => { S.setRoster(x); setR(x); };
   return <div className="page"><Header title="Player Roster" back="" />
     <PlayerForm onAdd={p => save([...r, p])} label="Add player" />
-    {r.sort((a, b) => a.name.localeCompare(b.name)).map(p => <div key={p.id} className="card row between"><span><b>{p.name}</b> <span className="muted">{p.dupr ? 'DUPR ' + p.dupr : ''} {p.gender || ''}</span></span><button className="ghost danger" onClick={() => confirm('Remove ' + p.name + '?') && save(r.filter(x => x.id !== p.id))}>✕</button></div>)}
+    {r.sort((a, b) => a.name.localeCompare(b.name)).map(p => <div key={p.id} className="card row between"><span><b>{p.name}</b> <span className="muted">{p.dupr ? 'DUPR ' + p.dupr : ''}</span></span><button className="ghost danger" onClick={() => confirm('Remove ' + p.name + '?') && save(r.filter(x => x.id !== p.id))}>✕</button></div>)}
   </div>;
 }
 
@@ -155,7 +156,7 @@ function NewEvent() {
     try { await S.pushRemote(code, ev); S.saveLocal(code, ev, false); } catch { /* will push later */ }
     go('e/' + code);
   };
-  const unit = format === 'team' ? 4 : format === 'fixed' ? 2 : 1;
+  const unit = unitSize(format);
   return <div className="page"><Header title={`New Event · ${step}/3`} back="" />
     {step === 1 && <>
       <label htmlFor="ev-name">Event name</label><input id="ev-name" value={name} onChange={e => setName(e.target.value)} />
@@ -171,7 +172,6 @@ function NewEvent() {
       <PlayerForm onAdd={p => { S.addToRoster(p); setPlayers([...players, p]); }} label="Add new player" />
       <div className="row between"><h2>{players.length} selected</h2><button className="ghost" onClick={() => setPlayers(players.length ? [] : roster)}>{players.length ? 'Clear' : 'Select all'}</button></div>
       <div className="chips">{[...roster, ...players.filter(p => !roster.some(r => r.id === p.id))].map(p => <button key={p.id} className={'chip ' + (sel.has(p.id) ? 'on' : '')} onClick={() => toggle(p)}>{p.name}{p.dupr ? ` · ${p.dupr}` : ''}</button>)}</div>
-      {format === 'mixed' && <p className="muted small">Mixed: set M/F on each player (roster) so teams are 1 man + 1 woman.</p>}
       {unit > 1 && <p className="muted small">{unit === 2 ? 'Pairs' : 'Teams of 4'} are formed when the game starts; anyone left over rotates in as a sub.</p>}
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 3 && <>
@@ -346,7 +346,7 @@ function Schedule({ ev, nm, act }: { ev: EventT; nm: (id: string) => string; act
 
 function Standings({ ev, me }: { ev: EventT; me?: string }) {
   const st = standings(ev);
-  const teams = ev.format === 'fixed' || ev.format === 'team';
+  const teams = unitSize(ev.format) > 1;
   return <div>
     {ev.finished && st[0] && <div className="card champ">🥇 Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {teams && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
@@ -361,7 +361,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
   const share = async () => { try { if (navigator.share) await navigator.share({ title: ev.name, url: link }); else { await navigator.clipboard.writeText(link); alert('Link copied'); } } catch { /* cancelled */ } };
   const regen = canRegenerate(ev);
   const download = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([toCSV(ev)], { type: 'text/csv' })); a.download = ev.name.replace(/\W+/g, '_') + '.csv'; a.click(); };
-  const unit = ev.format === 'team' ? 4 : ev.format === 'fixed' ? 2 : 1;
+  const unit = unitSize(ev.format);
   const [dropping, setDropping] = useState<string | null>(null);
   return <div>
     <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><button className="primary full" onClick={share}>📤 Share link</button></div>
@@ -370,7 +370,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <h2>Players ({ev.active.length} playing)</h2>
     {unit === 1 ? <PlayerForm label="Add late player" onAdd={p => { S.addToRoster(p); act(e => { e.players.push(p); e.active.push(p.id); }); }} />
       : <AddTeam unit={unit} act={act} />}
-    {ev.players.map(p => { const on = ev.active.includes(p.id); return <div key={p.id} className="card row between"><span className={on ? '' : 'muted'}><b>{p.name}</b> {p.dupr ? 'DUPR ' + p.dupr : ''} {p.gender || ''}{on ? '' : <span className="wd">withdrawn</span>}</span>
+    {ev.players.map(p => { const on = ev.active.includes(p.id); return <div key={p.id} className="card row between"><span className={on ? '' : 'muted'}><b>{p.name}</b> {p.dupr ? 'DUPR ' + p.dupr : ''}{on ? '' : <span className="wd">withdrawn</span>}</span>
       {on ? <button className="ghost danger small" onClick={() => setDropping(p.id)}>Drop</button> : <button className="ghost small readd" onClick={() => act(e => readdPlayer(e, p.id))}>↩ Re-add</button>}</div>; })}
     <p className="muted small">Dropped players keep their results (shown as withdrawn); unscored upcoming rounds are redrawn automatically. Re-added players return from the next round.{regen ? ' The current round has no scores yet, so you can re-draw it now.' : ''}</p>
     {regen && <button className="big" onClick={() => act(e => { e.rounds.pop(); e.rounds.push(nextRound(e)); delete e.plan; ensurePlan(e); })}>🔀 Re-draw current round</button>}
@@ -433,6 +433,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
       {joined.length > 0 && <div className="chips">{[...joined].sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip big" onClick={() => pick(p.id)}>{p.name}</button>)}</div>}
       <PlayerForm label="Join this game" onAdd={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} /></>}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn">✅ You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
+    {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
     <div className="chips">{joined.map(p => <span key={p.id} className={'chip static' + (p.id === me ? ' on' : '')}>{p.name}</span>)}</div>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
@@ -463,5 +464,20 @@ function Stats({ name }: { name?: string }) {
     {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>+/-</th><th>Ev</th></tr></thead>
       <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn">{b.name}</button></td><td>{b.wins}</td><td>{b.losses}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td><td>{b.events}</td></tr>)}</tbody></table>}
     <p className="muted small">Matched by name (not case-sensitive). Updates whenever a score is saved or edited.</p>
+  </div>;
+}
+
+/** Organizer sets the pairs (Mixed Doubles / Set Partners): tap two players to pair them. Unpaired players are auto-paired at start. */
+function PairBuilder({ ev, act }: { ev: EventT; act: Act }) {
+  const [first, setFirst] = useState('');
+  const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const pairs = (ev.teams || []).filter(t => t.length === 2 && t.every(p => ev.active.includes(p)));
+  const paired = new Set(pairs.flat()); const free = ev.players.filter(p => ev.active.includes(p.id) && !paired.has(p.id));
+  const tap = (id: string) => { if (!first) return setFirst(id); if (first === id) return setFirst(''); const a = first; setFirst(''); act(e => { e.teams = [...(e.teams || []).filter(t => !t.includes(a) && !t.includes(id)), [a, id]]; }); };
+  return <div className="card pairs"><b>Pairs ({pairs.length})</b>
+    <p className="muted small">{first ? `Now tap ${nm(first)}'s partner.` : 'Tap two players to pair them. Anyone left unpaired is paired automatically when the game starts.'}</p>
+    {pairs.map((t, i) => <div key={t.join()} className="pairRow"><span className="pairNo">{i + 1}</span><span className="grow pairNames">{nm(t[0])} &amp; {nm(t[1])}</span>
+      <button className="ghost small" aria-label={'Unpair ' + nm(t[0]) + ' and ' + nm(t[1])} onClick={() => act(e => { e.teams = (e.teams || []).filter(x => x.join() !== t.join()); })}>✕</button></div>)}
+    {free.length > 0 && <div className="chips">{free.map(p => <button key={p.id} className={'chip ' + (first === p.id ? 'on' : '')} onClick={() => tap(p.id)}>{p.name}</button>)}</div>}
   </div>;
 }

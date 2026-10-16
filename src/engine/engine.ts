@@ -1,6 +1,5 @@
 // Original pairing engine (no third-party code).
-export type Gender = 'M' | 'F' | undefined;
-export interface Player { id: string; name: string; dupr?: number; gender?: Gender }
+export interface Player { id: string; name: string; dupr?: number } // any legacy 'gender' field in saved data is ignored
 export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team';
 export interface Match { court: number; a: string[]; b: string[]; sa?: number; sb?: number; team?: [string, string] }
 export interface Round { n: number; matches: Match[]; byes: string[]; playoff?: boolean }
@@ -13,6 +12,8 @@ export interface EventT {
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
 export type Rng = () => number;
+/** Players per fixed unit: Mixed Doubles and Set Partners use organizer-set pairs, Team Battle uses 4s. */
+export const unitSize = (f: Format) => f === 'team' ? 4 : f === 'fixed' || f === 'mixed' ? 2 : 1;
 export function mulberry(seed: number): Rng {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -46,11 +47,10 @@ export function pickByes(ids: string[], sitCount: number, h: History, rng: Rng):
 
 function playingSlots(n: number, courts: number, unit: number) { return Math.min(courts, Math.floor(n / unit)) * unit; }
 
-interface Ctx { h: History; dupr: Map<string, number>; gender: Map<string, Gender>; balance: boolean; mixedOnly: boolean; noise: number; rng: Rng }
+interface Ctx { h: History; dupr: Map<string, number>; balance: boolean; noise: number; rng: Rng }
 function teamCost(t: string[], c: Ctx) {
   let s = 0;
   for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) s += 100 * (c.h.partner.get(key(t[i], t[j])) || 0) ** 2;
-  if (c.mixedOnly && t.length === 2 && c.gender.get(t[0]) && c.gender.get(t[0]) === c.gender.get(t[1])) s += 1000;
   return s;
 }
 function matchCost(a: string[], b: string[], c: Ctx) {
@@ -130,13 +130,12 @@ export function teamStandings(ev: EventT) {
 export function nextRound(ev: EventT, rng: Rng = Math.random): Round {
   const n = ev.rounds.filter(r => !r.playoff).length + 1;
   const h = history(ev.rounds);
-  const dupr = new Map(ev.players.map(p => [p.id, p.dupr ?? 3.5]));
-  const gender = new Map(ev.players.map(p => [p.id, p.gender]));
-  const c: Ctx = { h, dupr, gender, balance: ev.balanceDupr, mixedOnly: ev.format === 'mixed', noise: ev.format === 'mixer' ? 60 : 0.5, rng };
+  const dupr = new Map(ev.players.map(p => [p.id, typeof p.dupr === 'number' && Number.isFinite(p.dupr) ? p.dupr : 3.5]));
+  const c: Ctx = { h, dupr, balance: ev.balanceDupr, noise: ev.format === 'mixer' ? 60 : 0.5, rng };
   const active = ev.active.filter(id => ev.players.some(p => p.id === id));
 
-  if (ev.format === 'fixed' || ev.format === 'team') {
-    const size = ev.format === 'fixed' ? 2 : 4;
+  if (unitSize(ev.format) > 1) {
+    const size = unitSize(ev.format);
     const units = ev.teams.filter(t => t.length === size && t.every(p => active.includes(p)));
     const perMatchCourts = ev.format === 'team' ? 2 : 1;
     const maxMatches = Math.min(Math.floor(ev.courts / perMatchCourts), Math.floor(units.length / 2));
@@ -189,7 +188,7 @@ export function nextPlayoffRound(ev: EventT): Round | null {
   const n = ev.rounds.length + 1;
   if (po.length === 0) {
     let seeds: string[][];
-    if (ev.format === 'fixed' || ev.format === 'team') {
+    if (unitSize(ev.format) > 1) {
       const ts = teamStandings(ev); seeds = ts.slice(0, ts.length >= 4 ? 4 : 2).map(t => ev.teams[Number(t.id.slice(1)) - 1].slice(0, 2));
     } else {
       const st = standings(ev).filter(s => ev.active.includes(s.id)).map(s => s.id);
@@ -281,13 +280,15 @@ export function readdPlayer(ev: EventT, pid: string, rng: Rng = Math.random) { i
 /** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. */
 export function startEvent(ev: EventT, rng: Rng = Math.random) {
   if (ev.rounds.length) return;
-  const unit = ev.format === 'team' ? 4 : ev.format === 'fixed' ? 2 : 1;
+  const unit = unitSize(ev.format);
   if (unit > 1) {
-    const ps = ev.players.filter(p => ev.active.includes(p.id));
+    // keep the organizer's preset pairs/teams (complete, all still in), auto-form the rest
+    const used = new Set<string>(); const preset = (ev.teams || []).filter(tm => tm.length === unit && tm.every(p => ev.active.includes(p) && !used.has(p)) && (tm.forEach(p => used.add(p)), true));
+    const ps = ev.players.filter(p => ev.active.includes(p.id) && !used.has(p.id));
     const order = ev.seeding === 'dupr' || ev.balanceDupr ? [...ps].sort((a, b) => (b.dupr ?? 3.5) - (a.dupr ?? 3.5)) : shuffle(ps, rng);
     const nT = Math.floor(order.length / unit); const teams: string[][] = Array.from({ length: nT }, () => []);
     order.slice(0, nT * unit).forEach((p, i) => { const r = Math.floor(i / nT), k = i % nT; teams[r % 2 ? nT - 1 - k : k].push(p.id); });
-    ev.teams = teams;
+    ev.teams = [...preset, ...teams];
   }
   ev.rounds.push(nextRound(ev, rng)); ensurePlan(ev, rng);
 }

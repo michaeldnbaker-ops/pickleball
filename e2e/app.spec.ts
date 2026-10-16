@@ -14,7 +14,7 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await page.getByText('Create a game').click();
   await page.getByPlaceholder('e.g. the gym').fill('Gym');
   await page.getByText('Next: Players').click();
-  for (let i = 1; i <= 9; i++) { await page.getByPlaceholder('Name').fill('Player' + i); await page.getByPlaceholder('DUPR').fill(String(3 + i / 10)); await page.getByText('Add new player').click(); }
+  for (let i = 1; i <= 9; i++) { await page.getByPlaceholder('Name').fill('Player' + i); await page.getByLabel('DUPR (optional)').fill(String(3 + i / 10)); await page.getByText('Add new player').click(); }
   await expect(page.getByText('9 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Next ›' }).click();
   await startGame(page);
@@ -294,4 +294,47 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   // case-insensitive lookup
   await page.goto(BASE + '#/stats/' + encodeURIComponent(winner.toUpperCase())); await expect(page.locator('.hist')).toHaveCount(Number(gp));
   await page.screenshot({ path: 'e2e/shot-player-history.png' });
+});
+
+test('long names show fully; no M/F anywhere; DUPR optional', async ({ page }) => {
+  const long = 'Alexandria Montgomery-Smith'; // 27 chars
+  await page.goto(BASE + '#/new');
+  await expect(page.getByRole('radio', { name: /Mixed Doubles/ })).toBeVisible(); await expect(page.getByText(/\b(wo)?man\b/i)).toHaveCount(0);
+  await page.getByLabel('Place').fill('Stone Creek'); await page.getByText('Next: Players').click();
+  await expect(page.locator('select')).toHaveCount(0); await expect(page.getByText('M/F')).toHaveCount(0);
+  await expect(page.getByText('DUPR (optional)')).toBeVisible();
+  const input = page.getByLabel('Player name'); await input.fill(long);
+  const [iw, cw] = await input.evaluate(el => [el.getBoundingClientRect().width, el.closest('.card')!.clientWidth]); expect(iw).toBeGreaterThan(cw * 0.85);
+  expect(await input.evaluate(el => (el as HTMLInputElement).scrollWidth <= (el as HTMLInputElement).clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: 'e2e/shot-create-players.png' });
+  await page.getByText('Add new player').click(); // no DUPR → still added
+  for (const n of ['Bo', 'Cy', 'Di', 'Ed']) { await page.getByLabel('Player name').fill(n); await page.getByLabel('DUPR (optional)').fill('3.5'); await page.getByText('Add new player').click(); }
+  await expect(page.getByRole('button', { name: long })).toBeVisible();
+  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel('Balance matchups by DUPR').check();
+  await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  await expect(page.getByText('5 joined')).toBeVisible();
+  const chip = page.locator('.chip.static', { hasText: long }); await expect(chip).toHaveText(long);
+  expect(await chip.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await expect(page.getByLabel('Player name')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-lobby-names.png', fullPage: true });
+  await page.getByRole('button', { name: '▶ Start game' }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.locator('.match')).toHaveCount(1);
+  const all = page.locator('.match .names div, .byeNames'); await expect(page.locator('.match, .card.bye').filter({ hasText: long })).toHaveCount(1);
+  for (const el of await all.all()) expect(await el.evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: 'e2e/shot-longname-card.png' });
+});
+
+test('Mixed Doubles: organizer sets pairs in the lobby, pairs stay together', async ({ page }) => {
+  await page.goto(BASE + '#/new'); await page.getByRole('radio', { name: /Mixed Doubles/ }).click(); await page.getByLabel('Place').fill('Gym');
+  await page.getByText('Next: Players').click();
+  for (const n of ['Ann', 'Bob', 'Cat', 'Dan']) { await page.getByLabel('Player name').fill(n); await page.getByText('Add new player').click(); }
+  await expect(page.locator('select')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  const pb = page.locator('.pairs'); await pb.getByRole('button', { name: 'Ann', exact: true }).click(); await pb.getByRole('button', { name: 'Dan', exact: true }).click();
+  await expect(pb.locator('.pairRow')).toHaveText(/Ann & Dan/);
+  await page.screenshot({ path: 'e2e/shot-mixed-pairs.png' });
+  await page.getByRole('button', { name: '▶ Start game' }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  const together = () => page.locator('.match .side .names').allTextContents().then(a => a.some(t => t.includes('Ann') && t.includes('Dan')));
+  await expect(page.locator('.match')).toHaveCount(1); await expect.poll(together).toBe(true);
+  await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible(); await expect.poll(together).toBe(true);
 });

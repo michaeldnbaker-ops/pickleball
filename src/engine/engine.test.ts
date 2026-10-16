@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EventT, Format, nextRound, mulberry, history, standings, nextPlayoffRound, Player } from './engine';
 
 function mk(n: number, format: Format, courts = 99, extra: Partial<EventT> = {}): EventT {
-  const players: Player[] = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i, dupr: 3 + (i % 10) / 10, gender: i % 2 ? 'F' : 'M' }));
+  const players: Player[] = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i, dupr: 3 + (i % 10) / 10 }));
   let teams: string[][] = [];
   if (format === 'fixed') for (let i = 0; i + 1 < n; i += 2) teams.push(['p' + i, 'p' + (i + 1)]);
   if (format === 'team') for (let i = 0; i + 3 < n; i += 4) teams.push(['p' + i, 'p' + (i + 1), 'p' + (i + 2), 'p' + (i + 3)]);
@@ -43,12 +43,14 @@ describe('rotating round robin', () => {
   });
 });
 
-describe('mixed doubles', () => {
-  it('each team is one M and one F', () => {
-    const ev = play(mk(8, 'mixed'), 5);
-    const g = new Map(ev.players.map(p => [p.id, p.gender]));
-    ev.rounds.forEach(r => r.matches.forEach(m => [m.a, m.b].forEach(t => expect(g.get(t[0])).not.toBe(g.get(t[1])))));
+describe('DUPR optional', () => {
+  it('balance by DUPR works with missing, partial and legacy-gender data', () => {
+    const ev = mk(10, 'rotating'); ev.balanceDupr = true;
+    ev.players.forEach((p, i) => { if (i % 3) delete p.dupr; (p as unknown as Record<string, string>).gender = 'M'; });
+    const done = play(ev, 4); expect(done.rounds.length).toBe(4);
+    done.rounds.forEach(r => r.matches.forEach(m => expect(m.a.length + m.b.length).toBe(4)));
   });
+
 });
 
 describe('fixed partners & team', () => {
@@ -210,4 +212,18 @@ describe('lobby start, any player count, extend/end', () => {
     addRounds(ev, 3, mulberry(7)); expect(ev.totalRounds).toBe(4); expect(ev.plan!.length).toBe(3);
     endEvent(ev); expect(ev.finished).toBe(true); expect(ev.plan).toBeUndefined();
   });
+});
+
+import { unitSize } from './engine';
+describe('Mixed Doubles = organizer-set pairs, no gender', () => {
+  const mkL = (n: number): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format: 'mixed', courts: 3, totalRounds: 5, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
+  it('keeps the organizer pairs, auto-pairs the rest, pairs never split, opponents rotate', () => {
+    const ev = mkL(9); ev.teams = [['p0', 'p5'], ['p1', 'p6']]; expect(unitSize('mixed')).toBe(2);
+    startEvent(ev, mulberry(3));
+    expect(ev.teams.slice(0, 2)).toEqual([['p0', 'p5'], ['p1', 'p6']]); expect(ev.teams.length).toBe(4);
+    const all = [ev.rounds[0], ...ev.plan!]; const opp = new Set<string>();
+    for (const r of all) for (const m of r.matches) { for (const t of [m.a, m.b]) expect(ev.teams.some(T => T.join() === t.join())).toBe(true); opp.add([m.a.join(), m.b.join()].sort().join('|')); }
+    expect(opp.size).toBeGreaterThan(2);
+  });
+  it('drops a preset pair that has a withdrawn player', () => { const ev = mkL(8); ev.teams = [['p0', 'p1']]; ev.active = ev.active.filter(p => p !== 'p1'); startEvent(ev, mulberry(1)); expect(ev.teams.some(t => t.includes('p1'))).toBe(false); });
 });

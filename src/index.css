@@ -67,7 +67,7 @@ button.fmt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:le
 .courtHead{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#22303f;font-weight:800}
 .courtHead .court{font-size:1.15rem;color:var(--pri);margin:0;flex:1}.tag{background:var(--pri);color:var(--priFg);border-radius:999px;padding:3px 10px;font-size:.8rem;font-weight:800}
 .final{font-size:.75rem;color:var(--mut);font-weight:700;text-transform:uppercase}
-.side{display:flex;align-items:center;gap:10px;padding:12px 14px}.side .names{flex:1;min-width:0;font-size:1.35rem;font-weight:700;line-height:1.3}.side .names div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side{display:flex;align-items:center;gap:10px;padding:12px 14px}.side .names{flex:1;min-width:0;font-size:1.35rem;font-weight:700;line-height:1.3}.side .names div{overflow-wrap:anywhere;white-space:nowrap}
 .side.win .names{color:#fff}.side.lose .names{color:#8b9bb0;font-weight:600}
 .side .pts{font-size:2.2rem;font-weight:900;min-width:64px;text-align:center}.side.win .pts{color:var(--pri)}.side.lose .pts{color:#8b9bb0}
 .side.myside{background:rgba(184,240,42,.08)}
@@ -79,7 +79,7 @@ button.fmt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:le
 .card.bye{border-style:dashed}.bye .courtHead{background:none;padding:0 0 6px}.byeNames{font-size:1.15rem;font-weight:700}
 .tbd{text-align:center;color:var(--mut);padding:28px 16px}
 .big.next{margin-top:16px;min-height:64px;font-size:1.25rem}
-.nameBtn{all:unset;cursor:pointer;display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-bottom:1px dotted #475569}
+.nameBtn{all:unset;cursor:pointer;display:inline;overflow-wrap:anywhere;white-space:normal;border-bottom:1px dotted #475569}
 .dropBig{border:2px solid var(--red);color:#fecaca;background:#3a1d22;font-weight:800}
 .dangerFill{background:#dc2626!important;color:#fff!important;border:none;font-weight:800}
 .wd{margin-left:6px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:#fbbf24;border:1px solid #fbbf24;border-radius:6px;padding:1px 5px}
@@ -121,3 +121,12 @@ button.secondary{background:transparent;border:2px solid var(--pri);color:var(--
 .hist{display:flex;align-items:center;gap:12px}.res{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:900;flex:none}.res.w{background:var(--pri);color:var(--priFg)}.res.l{background:#475569}
 .hScore{font-size:1.3rem;font-weight:900}.linkBtn{all:unset;cursor:pointer;font-weight:700;color:var(--fg);text-decoration:underline dotted}
 .board tr.tap{cursor:pointer}
+
+/* full-width names, DUPR optional below */
+.pform label{margin:0 0 6px}.pform .nameInput{width:100%;font-size:1.15rem}
+.duprRow{display:flex;align-items:center;gap:10px;margin-top:10px}.duprRow label{margin:0;flex:1;font-size:.9rem}.duprInput{width:120px!important;flex:none;min-height:46px;padding:10px 12px}
+.opt-tag{color:var(--mut);font-weight:400}
+.chip{white-space:normal;overflow-wrap:anywhere;text-align:left;max-width:100%}
+.gName,.gTime,header h1,.byeNames,.hist b,td{overflow-wrap:anywhere}
+.side .names div{white-space:normal!important}
+.pairs .pairRow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}.pairNo{width:28px;height:28px;border-radius:50%;background:#26360f;color:var(--pri);display:grid;place-items:center;font-weight:800;flex:none}.pairNames{font-weight:700;overflow-wrap:anywhere}.pairs .chips{margin-top:10px}
