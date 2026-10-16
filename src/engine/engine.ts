@@ -48,7 +48,7 @@ export function pickByes(ids: string[], sitCount: number, h: History, rng: Rng):
 
 function playingSlots(n: number, courts: number, unit: number) { return Math.min(courts, Math.floor(n / unit)) * unit; }
 
-interface Ctx { h: History; dupr: Map<string, number>; balance: boolean; noise: number; rng: Rng }
+interface Ctx { h: History; dupr: Map<string, number>; balance: boolean; noise: number; rng: Rng; iters?: number }
 function teamCost(t: string[], c: Ctx) {
   let s = 0;
   for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) s += 100 * (c.h.partner.get(key(t[i], t[j])) || 0) ** 2;
@@ -128,11 +128,11 @@ export function teamStandings(ev: EventT) {
 }
 
 /** Generate the next round for any format. */
-export function nextRound(ev: EventT, rng: Rng = Math.random): Round {
+export function nextRound(ev: EventT, rng: Rng = Math.random, iters?: number): Round {
   const n = ev.rounds.filter(r => !r.playoff).length + 1;
   const h = history(ev.rounds);
   const dupr = new Map(ev.players.map(p => [p.id, typeof p.dupr === 'number' && Number.isFinite(p.dupr) ? p.dupr : 3.5]));
-  const c: Ctx = { h, dupr, balance: ev.balanceDupr, noise: ev.format === 'mixer' ? 60 : 0.5, rng };
+  const c: Ctx = { h, dupr, balance: ev.balanceDupr, noise: ev.format === 'mixer' ? 60 : 0.5, rng, iters };
   const active = ev.active.filter(id => ev.players.some(p => p.id === id));
 
   if (unitSize(ev.format) > 1) {
@@ -180,7 +180,7 @@ export function nextRound(ev: EventT, rng: Rng = Math.random): Round {
     for (let i = 0; i + 4 <= order.length; i += 4) { const s = bestSplit(order.slice(i, i + 4), { ...c, balance: true, noise: 0.1 }); matches.push({ court: i / 4 + 1, a: s.a, b: s.b }); }
     return { n, matches, byes };
   }
-  return { n, matches: rotatingRound(playing, ev.courts, c), byes };
+  return { n, matches: rotatingRound(playing, ev.courts, c, c.iters ?? 300), byes };
 }
 
 /** Playoffs: single elimination. Individual formats form seeded pairs (1+8, 2+7, ...). */
@@ -231,12 +231,77 @@ export function ensurePlan(ev: EventT, rng: Rng = Math.random): boolean {
   const key = planKeyOf(ev); if (ev.plan && ev.planKey === key) return false;
   const old = ev.plan || [];
   const sim: EventT = JSON.parse(JSON.stringify({ ...ev, plan: undefined })); const plan: Round[] = [];
-  for (let k = 0; sim.rounds.filter(r => !r.playoff).length < sim.totalRounds || (old[k] && isLocked(old[k])); k++) {
-    const n = sim.rounds.filter(r => !r.playoff).length + 1;
-    const r: Round = old[k] && isLocked(old[k]) ? { ...JSON.parse(JSON.stringify(old[k])), n } : nextRound(sim, rng);
-    sim.rounds.push(r); plan.push(JSON.parse(JSON.stringify(r)));
+  const reg = () => sim.rounds.filter(r => !r.playoff).length;
+  let k = 0;
+  for (; old[k] && isLocked(old[k]); k++) { const r: Round = { ...JSON.parse(JSON.stringify(old[k])), n: reg() + 1 }; sim.rounds.push(r); plan.push(r); }
+  // the rest (no scores yet) is drawn as a whole with a multi-start search; a later locked round is kept in place
+  while (reg() < sim.totalRounds || old.slice(k).some(isLocked)) {
+    const nextLocked = old.findIndex((r, i) => i >= k && isLocked(r));
+    const count = nextLocked < 0 ? sim.totalRounds - reg() : nextLocked - k;
+    for (const r of searchSchedule(sim, Math.max(0, count), rng)) { const rr = { ...r, n: reg() + 1 }; sim.rounds.push(rr); plan.push(JSON.parse(JSON.stringify(rr))); }
+    k += Math.max(0, count);
+    if (nextLocked >= 0) { const r: Round = { ...JSON.parse(JSON.stringify(old[nextLocked])), n: reg() + 1 }; sim.rounds.push(r); plan.push(r); k = nextLocked + 1; }
+    else break;
   }
   ev.plan = plan; ev.planKey = key; return true;
+}
+/** Whole-schedule quality: repeat partners weigh most, then repeat opponents, then uneven sit-outs / games (lower is better). */
+export function scheduleCost(rounds: Round[], ids: string[]): number {
+  const h = history(rounds); let s = 0;
+  for (const v of h.partner.values()) s += 1000 * (v - 1) * v / 2;
+  for (const v of h.opp.values()) s += 10 * (v - 1) * v / 2;
+  const g = ids.map(i => h.games.get(i) || 0); s += 1e5 * Math.max(0, Math.max(...g) - Math.min(...g) - 1);
+  return s;
+}
+/** Polish a schedule by local search: swap players inside a round, or trade a sit-out between two rounds (keeps everyone's game count). Only rounds from `from` on change. */
+export function improveSchedule(rounds: Round[], from: number, rng: Rng, iters = 20000): Round[] {
+  const ids = [...new Set(rounds.flatMap(r => [...r.byes, ...r.matches.flatMap(m => [...m.a, ...m.b])]))]; const N = ids.length; const ix = new Map(ids.map((x, i) => [x, i]));
+  // seat arrays: per round, 4 per court (A0 A1 B0 B1), then byes
+  const R = rounds.map(r => ({ seats: r.matches.flatMap(m => [...m.a, ...m.b].map(p => ix.get(p)!)), byes: r.byes.map(p => ix.get(p)!), n: r.n, courts: r.matches.map(m => m.court) }));
+  if (R.slice(from).every(r => r.seats.length === 0)) return rounds;
+  const P = new Int32Array(N * N), O = new Int32Array(N * N);
+  const add = (r: { seats: number[] }, d: number) => { const s = r.seats; for (let c = 0; c < s.length; c += 4) { const [a, b, x, y] = [s[c], s[c + 1], s[c + 2], s[c + 3]]; P[a * N + b] += d; P[b * N + a] += d; P[x * N + y] += d; P[y * N + x] += d; for (const u of [a, b]) for (const v of [x, y]) { O[u * N + v] += d; O[v * N + u] += d; } } };
+  R.forEach(r => add(r, 1));
+  const tri = (v: number) => (v > 1 ? (v - 1) * v / 2 : 0);
+  const byeAdj = () => { let s = 0; for (let i = 1; i < R.length; i++) for (const p of R[i].byes) if (R[i - 1].byes.includes(p)) s++; return s; };
+  // sit-outs rotate in order: nobody sits again while someone playing that round has sat out fewer times so far
+  const unfair = () => { const cnt = new Int32Array(N); let v = 0; for (let k = 0; k < R.length; k++) { const r = R[k]; if (k >= from && r.byes.length) { let mx = -1, mn = 1e9; for (const p of r.byes) mx = Math.max(mx, cnt[p]); for (const p of r.seats) mn = Math.min(mn, cnt[p]); if (mx > mn) v += mx - mn; } for (const p of r.byes) cnt[p]++; } return v; };
+  const cost = () => { let s = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) s += 1000 * tri(P[i * N + j]) + 10 * tri(O[i * N + j]); return s + byeAdj() + 1e6 * unfair(); };
+  let cur = cost(); const span = R.length - from; if (span <= 0) return rounds;
+  const pick = () => from + Math.floor(rng() * span);
+  for (let it = 0; it < iters && cur > 0; it++) {
+    const T = 2 * (1 - it / iters);
+    if (rng() < 0.6 || R[from].byes.length === 0) {
+      const r = R[pick()]; const L = r.seats.length; if (L < 4) continue;
+      const i = Math.floor(rng() * L), j = Math.floor(rng() * L); if (i === j || (i >> 1) === (j >> 1)) continue;
+      add(r, -1); [r.seats[i], r.seats[j]] = [r.seats[j], r.seats[i]]; add(r, 1);
+      const c = cost(); if (c <= cur || rng() < Math.exp((cur - c) / Math.max(T, 1e-9))) cur = c; else { add(r, -1); [r.seats[i], r.seats[j]] = [r.seats[j], r.seats[i]]; add(r, 1); }
+    } else {
+      const r1 = R[pick()], r2 = R[pick()]; if (r1 === r2 || !r1.byes.length || !r2.byes.length) continue;
+      const x = r1.byes[Math.floor(rng() * r1.byes.length)], y = r2.byes[Math.floor(rng() * r2.byes.length)]; if (x === y) continue;
+      const sx = r2.seats.indexOf(x), sy = r1.seats.indexOf(y); if (sx < 0 || sy < 0) continue; // x plays in r2, y plays in r1
+      const swap = () => { add(r1, -1); add(r2, -1); r1.seats[sy] = x; r1.byes[r1.byes.indexOf(x)] = y; r2.seats[sx] = y; r2.byes[r2.byes.indexOf(y)] = x; add(r1, 1); add(r2, 1); };
+      const unswap = () => { add(r1, -1); add(r2, -1); r1.seats[sy] = y; r1.byes[r1.byes.indexOf(y)] = x; r2.seats[sx] = x; r2.byes[r2.byes.indexOf(x)] = y; add(r1, 1); add(r2, 1); };
+      swap(); const c = cost(); if (c <= cur || rng() < Math.exp((cur - c) / Math.max(T, 1e-9))) cur = c; else unswap();
+    }
+  }
+  return R.map((r, k) => k < from ? rounds[k] : { ...rounds[k], byes: r.byes.map(i => ids[i]), matches: r.courts.map((court, c) => ({ court, a: [ids[r.seats[c * 4]], ids[r.seats[c * 4 + 1]]], b: [ids[r.seats[c * 4 + 2]], ids[r.seats[c * 4 + 3]]] })) });
+}
+/** Draw `count` more regular rounds for sim (rotating format): a few greedy random restarts, then polish the best whole schedule by local search. */
+export function searchSchedule(sim: EventT, count: number, rng: Rng, restarts = sim.active.length > 12 ? 2 : 6): Round[] {
+  const ids = sim.active; let best: Round[] = []; let bestCost = Infinity;
+  const smart = sim.format === 'rotating' && !sim.balanceDupr;
+  const tries = smart ? restarts : 1;
+  for (let t = 0; t < tries; t++) {
+    const e: EventT = { ...sim, rounds: sim.rounds.slice() }; const out: Round[] = [];
+    for (let k = 0; k < count; k++) { const r = nextRound(e, rng, smart ? 30 : undefined); e.rounds.push(r); out.push(r); }
+    const cost = scheduleCost(e.rounds.filter(r => !r.playoff), ids);
+    if (cost < bestCost) { bestCost = cost; best = out; }
+    if (cost === 0) break;
+  }
+  if (!smart || !best.length) return best;
+  const prior = sim.rounds.filter(r => !r.playoff);
+  return improveSchedule([...prior, ...best], prior.length, rng).slice(prior.length);
 }
 /** Advance to the next regular round, using the pre-drawn plan when still valid. */
 export function takeNextRound(ev: EventT, rng: Rng = Math.random): Round {
@@ -291,11 +356,14 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
     order.slice(0, nT * unit).forEach((p, i) => { const r = Math.floor(i / nT), k = i % nT; teams[r % 2 ? nT - 1 - k : k].push(p.id); });
     ev.teams = [...preset, ...teams];
   }
-  ev.rounds.push(nextRound(ev, rng)); ensurePlan(ev, rng);
+  if (resultDependent(ev.format)) { ev.rounds.push(nextRound(ev, rng)); return; }
+  // draw the whole schedule at once (round 1 included) so it is optimized as a set
+  const all = searchSchedule(ev, Math.max(1, ev.totalRounds), rng);
+  ev.rounds.push(all[0]); ev.plan = all.slice(1).map((r, i) => ({ ...r, n: i + 2 })); ev.planKey = planKeyOf(ev);
 }
 /** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
 export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
 export function endEvent(ev: EventT) { ev.finished = true; delete ev.plan; delete ev.planKey; }
 
-/** A game can start only with 4, 8, 12, 16… players. */
-export const startOk = (n: number) => n >= 4 && n % 4 === 0;
+/** A game can start with 4 or more players; extras rotate sit-outs evenly. */
+export const startOk = (n: number) => n >= 4;

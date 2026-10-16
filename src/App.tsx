@@ -216,7 +216,7 @@ function NewEvent() {
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 3 && <>
       <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} />
-      <p className="muted small">Games start with 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras rotate in fairly.</p>
+      <p className="muted small">Any number of players from 4 up works: courts fill 4 at a time and everyone else sits out in fair rotation. Partners don't repeat until they have to.</p>
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
@@ -456,7 +456,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts · {ev.totalRounds} rounds</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
-    {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
+    {canStart && !ok && <p className="startNeed" role="status">Need at least 4 players to start (have {joined.length})</p>}
     {!me && <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
@@ -467,7 +467,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
-      <p>Round 1 is drawn now from everyone who has joined. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
+      <p>The whole schedule is drawn now from everyone who has joined{joined.length % 4 ? ` — with ${joined.length} players, sit-outs rotate evenly` : ''}. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
       <button className="big primary" disabled={starting || !ok} onClick={start}>Start game</button>
       <button className="big" onClick={() => setAsk(false)}>Keep waiting</button></div></div>}
   </div>;

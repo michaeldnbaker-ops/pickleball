@@ -240,4 +240,4 @@ describe('scores are taken exactly as typed (no target / win-by-2)', () => {
   });
 });
 
-describe('start rule', () => { it('needs a multiple of 4 players', () => { for (const n of [4, 8, 12, 16, 20]) expect(startOk(n)).toBe(true); for (const n of [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13]) expect(startOk(n)).toBe(false); }); });
+describe('start rule', () => { it('needs at least 4 players', () => { for (const n of [4, 5, 7, 8, 10, 13, 16]) expect(startOk(n)).toBe(true); for (const n of [0, 1, 2, 3]) expect(startOk(n)).toBe(false); }); });
