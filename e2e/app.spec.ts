@@ -223,7 +223,7 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
   // players sign up by name from the Join list
   const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p2 = await ctx.newPage();
-  await p2.goto(BASE + '#/join'); await p2.getByLabel('Have a code or link?').fill(code); await p2.getByRole('button', { name: 'Join', exact: true }).click();
+  await p2.goto(BASE + '#/join'); await expect(p2.getByText('Have a code or link?')).toHaveCount(0); await expect(p2.locator('#join-code')).toHaveCount(0); await p2.screenshot({ path: 'e2e/shot-join-nocode.png' }); await p2.goto(new URL('g/' + code, BASE).toString());
   await expect(p2.getByText('Add yourself to this game')).toBeVisible();
   const names = Array.from({ length: 12 }, (_, i) => `${['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'][i]}-${tag}`);
   const join = async (n: string, last: boolean) => { await p2.getByLabel('Player name').fill(n); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); if (!last) { await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible(); } };

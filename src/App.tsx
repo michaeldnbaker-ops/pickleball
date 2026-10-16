@@ -97,7 +97,7 @@ function GameCard({ g, onClick }: { g: { code: string; name: string; date: strin
 }
 
 function Join() {
-  const [code, setCode] = useState(''); const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
+  const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
   useEffect(() => { S.listEvents().then(setList).catch(() => setErr(true)); }, []);
   // This phone's own recent games: only ones that still exist, aren't finished, and are today/upcoming (deleted/old ones drop off)
   const [mineOk, setMineOk] = useState<Set<string>>(new Set());
@@ -107,12 +107,10 @@ function Join() {
   return <div className="page"><Header title="Join a game" back="" />
     <h2>Upcoming games</h2>
     {list === null && !err && <p className="muted">Loading games…</p>}
-    {err && <p className="warn">Couldn't load the games list (offline?). Use a code below.</p>}
+    {err && <p className="warn">Couldn't load the games list (offline?). Open the game link you were sent.</p>}
     {list?.length === 0 && <div className="card empty"><div className="emptyIcon"><Logo size={72} /></div><b>No current games</b><p className="muted">Nobody has set up a game yet. Start one and share the link.</p><button className="big primary" onClick={() => go('new')}>Create a game</button></div>}
     <div className="gameList">{list?.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code + '/join')} />)}</div>
     {mine.length > 0 && <><h2>My recent games</h2>{mine.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code)} />)}</>}
-    <div className="card"><label htmlFor="join-code">Have a code or link?</label>
-      <div className="row"><input id="join-code" value={code} onChange={e => { const v = e.target.value.trim(); const m = v.match(/#\/e\/([A-Za-z0-9]+)/); setCode((m ? m[1] : v).toUpperCase().slice(0, 8)); }} placeholder="e.g. K7Q2MD" /><button className="primary" disabled={code.length < 4} onClick={() => go('e/' + code + '/join')}>Join</button></div></div>
   </div>;
 }
 
