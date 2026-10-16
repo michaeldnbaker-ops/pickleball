@@ -1,8 +1,16 @@
 import { test, expect, devices } from '@playwright/test';
 test.use({ ...devices['iPhone 13'], browserName: 'chromium' });
 const BASE = process.env.BASE || 'http://localhost:4173/';
+const API = 'https://br-weathered-heart-b520ib6i-pbapi.compute.c-7.us-east-2.aws.neon.tech';
+/** Every context in this suite: test mode on, and any game write is force-flagged hidden so e2e games never reach the public Join list/stats. */
+async function markTest(ctx: import('@playwright/test').BrowserContext) {
+  await ctx.addInitScript(() => localStorage.setItem('pb:hidden', '1'));
+  await ctx.route(API + '/e/*', async r => { if (r.request().method() !== 'PUT') return r.continue(); const b = r.request().postDataJSON(); if (b?.data) b.data.hidden = true; await r.continue({ postData: JSON.stringify(b) }); });
+}
 // test-created games are flagged hidden so they never show in the public Join list or all-time stats
-test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('pb:hidden', '1')); });
+test.beforeEach(async ({ page }) => { await markTest(page.context()); });
+// safety net: after the run, nothing created by this suite may be visible in the public Join list
+test.afterAll(async ({ request }) => { const r = await (await request.get(API + '/events?from=2000-01-01T00:00')).json(); expect(r.events.filter((e: { name: string }) => /test|e2e|demo/i.test(e.name || ''))).toEqual([]); });
 const startGame = async (page: import('@playwright/test').Page) => {
   await page.getByRole('button', { name: 'Create game' }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
@@ -29,9 +37,9 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await page.getByRole('button', { name: 'Standings', exact: true }).click();
   await expect(page.locator('tbody tr')).toHaveCount(9);
   // player phone
-  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await ctx.addInitScript(() => localStorage.setItem('pb:hidden', '1')); const p2 = await ctx.newPage();
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); const p2 = await ctx.newPage();
   await p2.goto(BASE + '#/e/' + code);
-  await p2.getByRole('button', { name: 'Me', exact: true }).click();
+  await expect(p2.getByText('This game already started')).toBeVisible(); // not yet identified → started screen with name picker
   await p2.getByRole('button', { name: 'Player3', exact: true }).click();
   await expect(p2.getByText('Hi, Player3')).toBeVisible();
   await expect(p2.locator('.next')).toBeVisible();
@@ -212,7 +220,6 @@ test('drop at 5 on one court: from next round on, 4 left play every round', asyn
   for (let i = 0; i < 3; i++) { await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: 'Round ' + (i + 2) + ' of 4' })).toBeVisible(); await expect.poll(() => roundNames(page)).not.toContain(victim); await expect(page.locator('.card.bye')).toHaveCount(0); }
 });
 
-const API = 'https://br-weathered-heart-b520ib6i-pbapi.compute.c-7.us-east-2.aws.neon.tech';
 test('landing, Join list + empty state (mocked), time wheel', async ({ page }) => {
   await page.goto(BASE);
   await expect(page.locator('.landBtns button')).toHaveCount(2); await expect(page.getByRole('heading', { name: 'Stone Creek Pickleball' })).toBeVisible(); await expect(page).toHaveTitle('Stone Creek Pickleball');
@@ -258,7 +265,7 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
   // players sign up by name from the Join list
-  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await ctx.addInitScript(() => localStorage.setItem('pb:hidden', '1')); const p2 = await ctx.newPage();
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p2 = await ctx.newPage();
   await p2.goto(BASE + '#/join'); await p2.getByLabel('Have a code or link?').fill(code); await p2.getByRole('button', { name: 'Join', exact: true }).click();
   await expect(p2.getByText('Add yourself to this game')).toBeVisible();
   const names = Array.from({ length: 10 }, (_, i) => `${['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo'][i]}-${tag}`);
@@ -271,11 +278,20 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await expect(p2.getByText('Hi, ' + names[9])).toBeVisible();
   await page.getByLabel('Refresh').click(); await expect(page.getByRole('heading', { name: 'Round 1 of 2' })).toBeVisible();
   await expect(page.locator('.match')).toHaveCount(2); await expect(page.locator('.byeNames')).toBeVisible();
-  // late join after the start → slotted into upcoming rounds
+  // after the start: game drops off the public Join list, the link shows "already started", and the API refuses new players
   const p3 = await ctx.newPage(); await p3.goto(BASE + '#/e/' + code + '/join'); await p3.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p3.reload();
-  await expect(p3.getByText('Add yourself to this game')).toBeVisible(); await p3.getByLabel('Player name').fill('Late-' + tag); await p3.getByRole('button', { name: 'Join', exact: true }).click();
-  await expect(p3.getByText('Hi, Late-' + tag)).toBeVisible(); await p3.waitForTimeout(1500); await p3.getByLabel('Refresh').click();
-  await expect(p3.locator('.compact', { hasText: 'upcoming' })).toHaveCount(1);
+  await expect(p3.getByText('This game already started')).toBeVisible(); await expect(p3.getByText('Add yourself to this game')).toHaveCount(0);
+  await p3.screenshot({ path: 'e2e/shot-started.png' });
+  const listed = await (await p3.request.get(API + '/events?test=1&from=2000-01-01T00:00')).json(); expect(listed.events.map((e: { code: string }) => e.code)).not.toContain(code);
+  const cur = (await (await p3.request.get(API + '/e/' + code)).json()).data;
+  const bad = await p3.request.put(API + '/e/' + code, { data: { data: { ...cur, players: [...cur.players, { id: 'x' + tag, name: 'Sneak-' + tag }], active: [...cur.active, 'x' + tag] } } }); expect(bad.status()).toBe(409);
+  // an existing player can still tap their name and get back in
+  await p3.getByRole('button', { name: names[0], exact: true }).click(); await expect(p3.getByText('Hi, ' + names[0])).toBeVisible();
+  // organizer can still add a late player from Manage
+  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByLabel('Player name').fill('Late-' + tag); await page.getByRole('button', { name: 'Add late player' }).click();
+  await expect(page.getByText('Late-' + tag).first()).toBeVisible(); await page.waitForTimeout(1500);
+  expect(JSON.stringify((await (await p3.request.get(API + '/e/' + code)).json()).data.players)).toContain('Late-' + tag);
+  await page.getByRole('button', { name: 'Courts', exact: true }).click();
   // score round 1, advance, score round 2 → last-round options
   await page.getByLabel('Refresh').click();
   const scoreAll = async () => { const n = await page.locator('.match').count(); for (let c = 0; c < n; c++) { const card = page.locator('.match').nth(c); await card.getByLabel('Team A score').fill('11'); await card.getByLabel('Team B score').fill(String(4 + c)); await card.getByText('Save score').click(); await expect(card.locator('.final')).toBeVisible(); } };
@@ -371,7 +387,7 @@ test('Share game: short /g/CODE link, native share, copy-link fallback, deep lin
   await page.screenshot({ path: 'e2e/shot-share.png' });
   await sheet.getByRole('button', { name: 'Done' }).click();
   // no native share → header button falls back to the sheet
-  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await ctx.addInitScript(() => { localStorage.setItem('pb:hidden', '1'); Object.defineProperty(navigator, 'share', { configurable: true, value: undefined }); });
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); await ctx.addInitScript(() => { Object.defineProperty(navigator, 'share', { configurable: true, value: undefined }); });
   const p2 = await ctx.newPage();
   // deep link opens straight to "Add yourself to this game" (no picker first)
   await p2.goto(expected);

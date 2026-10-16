@@ -196,7 +196,7 @@ function NewEvent() {
       <div role="radiogroup" aria-labelledby="fmt-label">{FORMATS.map(f => <button type="button" role="radio" aria-checked={format === f.id} key={f.id} className={'card tap fmt ' + (format === f.id ? 'sel' : '')} onClick={() => setFormat(f.id)}><span className="radio" aria-hidden="true">{format === f.id ? '✓' : ''}</span><span className="fmtText"><b>{f.name}</b><span className="muted small">{f.desc}</span></span></button>)}</div>
       <button className="big primary" onClick={() => setStep(2)}>Next: Players ›</button></>}
     {step === 2 && <>
-      <p className="muted small">Optional — anyone can also join by name from the game link or the Join list before you start (or late, after it starts).</p>
+      <p className="muted small">Optional — anyone can also join by name from the game link or the Join list until the game starts.</p>
       <PlayerForm onAdd={p => { S.addToRoster(p); setPlayers([...players, p]); }} label="Add new player" />
       <div className="row between"><h2>{players.length} selected</h2><button className="ghost" onClick={() => setPlayers(players.length ? [] : roster)}>{players.length ? 'Clear' : 'Select all'}</button></div>
       <div className="chips">{[...roster, ...players.filter(p => !roster.some(r => r.id === p.id))].map(p => <button key={p.id} className={'chip ' + (sel.has(p.id) ? 'on' : '')} onClick={() => toggle(p)}>{p.name}{p.dupr ? ` · ${p.dupr}` : ''}</button>)}</div>
@@ -222,7 +222,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const [ev, setEv] = useState<EventT | null>(S.localEvent(code));
   const [online, setOnline] = useState(true); const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(joining || S.getMe(code) ? 'me' : 'courts');
-  const [stamp, setStamp] = useState<Date | null>(null); const [sharing, setSharing] = useState(false);
+  const [stamp, setStamp] = useState<Date | null>(null); const [sharing, setSharing] = useState(false); const [watching, setWatching] = useState(false);
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
   usePullToRefresh(refresh);
@@ -233,6 +233,8 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   if (!ev) return <div className="page"><Header title="Event" back="" />{loading ? <p>Loading…</p> : <p>Event {code} not found{online ? '' : ' (offline)'}.</p>}</div>;
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
+  const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId);
+  if (!member && !S.isOrg(code) && !watching) return <Started ev={ev} code={code} onPick={id => { S.setMe(code, id); setTab('me'); setWatching(true); }} />;
   return <div className="page withtabs">
     <header><button className="ghost" onClick={() => go('')}>‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
       <button className="ghost hdrShare" onClick={() => shareGame(ev, code, () => setSharing(true))} aria-label="Share game"><ShareIcon /></button>
@@ -470,7 +472,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
-      <p>Round 1 is drawn now from everyone who has joined{joined.length % 4 ? `; ${Math.max(0, joined.length - Math.min(ev.courts, Math.floor(joined.length / 4)) * 4)} sit out each round in fair rotation` : ''}. Late arrivals can still join and get slotted into upcoming rounds.</p>
+      <p>Round 1 is drawn now from everyone who has joined{joined.length % 4 ? `; ${Math.max(0, joined.length - Math.min(ev.courts, Math.floor(joined.length / 4)) * 4)} sit out each round in fair rotation` : ''}. After the start, new players can't join from the link; the organizer can still add a late player in Manage.</p>
       <button className="big primary" onClick={() => { setAsk(false); act(e => startEvent(e)); }}>Start game</button>
       <button className="big" onClick={() => setAsk(false)}>Keep waiting</button></div></div>}
   </div>;
@@ -528,6 +530,18 @@ function ShareGame({ code, onClose }: { ev?: EventT; code: string; onClose: () =
     <button className="big primary" onClick={copy}>{copied ? 'Link copied' : <><Icon n="copy" /> Copy link</>}</button>
     <button className="big" onClick={onClose}>Done</button>
   </div></div>;
+}
+
+/** Shown to a /g/CODE (or Join) visitor who isn't in a game that already started: no new joins. */
+function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: string) => void }) {
+  const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  return <div className="page"><Header title={ev.name} back="" />
+    <div className="card startedCard"><h2>This game already started</h2>
+      <p className="muted">{ev.name} is underway ({code}), so new players can't join from the link. Ask the organizer if you need to be added.</p>
+      <button className="big primary" onClick={() => go('join')}>Find another game</button></div>
+    {joined.length > 0 && <div className="card"><h3 className="small muted">Already playing? Tap your name</h3>
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></div>}
+  </div>;
 }
 
 /** Shared-link landing: add yourself first (name focused, optional DUPR, big Join); already-joined names below. */

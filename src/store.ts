@@ -22,31 +22,38 @@ export async function fetchRemote(code: string): Promise<EventT | null> {
   if (r.status === 404) return null; if (!r.ok) throw new Error('HTTP ' + r.status);
   return (await r.json()).data;
 }
+export class StartedError extends Error { constructor() { super('started'); } }
 export async function pushRemote(code: string, ev: EventT) {
-  const r = await fetch(`${API}/e/${code}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
+  const r = await fetch(`${API}/e/${code}${isOrg(code) ? '?org=1' : ''}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
+  if (r.status === 409) throw new StartedError();
   if (!r.ok) throw new Error('HTTP ' + r.status);
+}
+/** Server refused a join because the game already started: drop the local edit and take the server copy. */
+async function rejected(code: string, fallback: EventT): Promise<{ ev: EventT; online: boolean; started: true }> {
+  let ev = fallback; try { ev = (await fetchRemote(code)) || fallback; } catch { /* keep */ }
+  saveLocal(code, ev, false); return { ev, online: true, started: true };
 }
 /** Load: push pending local changes first, else take server copy. Falls back to local offline. */
 export async function load(code: string): Promise<{ ev: EventT | null; online: boolean }> {
   const local = localEvent(code);
   try {
-    if (local && isDirty(code)) { await pushRemote(code, local); saveLocal(code, local, false); return { ev: local, online: true }; }
+    if (local && isDirty(code)) { try { await pushRemote(code, local); } catch (e) { if (e instanceof StartedError) return rejected(code, local); throw e; } saveLocal(code, local, false); return { ev: local, online: true }; }
     const remote = await fetchRemote(code);
     if (remote) { saveLocal(code, remote, false); return { ev: remote, online: true }; }
     return { ev: local, online: true };
   } catch { return { ev: local, online: false }; }
 }
 /** Mutate: re-fetch latest (to avoid clobbering others), apply change, save locally, push. */
-export async function mutate(code: string, fn: (e: EventT) => void, current: EventT): Promise<{ ev: EventT; online: boolean }> {
+export async function mutate(code: string, fn: (e: EventT) => void, current: EventT): Promise<{ ev: EventT; online: boolean; started?: boolean }> {
   let base = current;
   try { if (!isDirty(code)) { const r = await fetchRemote(code); if (r) base = r; } } catch { /* offline */ }
   const ev: EventT = JSON.parse(JSON.stringify(base)); fn(ev);
   saveLocal(code, ev, true);
-  try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch { return { ev, online: false }; }
+  try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch (e) { if (e instanceof StartedError) return rejected(code, base); return { ev, online: false }; }
 }
 
 export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number }
-/** Public upcoming/in-progress games, soonest first (hides events more than a day past). */
+/** Public upcoming games not yet started, soonest first (hides events more than a day past). */
 export async function listEvents(): Promise<Listed[]> {
   const d = new Date(Date.now() - 864e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   const r = await fetch(`${API}/events?from=${d.toISOString().slice(0, 16)}${testMode() ? '&test=1' : ''}`, { cache: 'no-store' });
