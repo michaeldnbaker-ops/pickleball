@@ -214,9 +214,9 @@ test('drop at 5 on one court: from next round on, 4 left play every round', asyn
 const API = 'https://br-weathered-heart-b520ib6i-pbapi.compute.c-7.us-east-2.aws.neon.tech';
 test('landing, Join list + empty state (mocked), time wheel', async ({ page }) => {
   await page.goto(BASE);
-  await expect(page.locator('.landBtns button')).toHaveCount(2);
+  await expect(page.locator('.landBtns button')).toHaveCount(2); await expect(page.getByRole('heading', { name: 'Stone Creek Pickleball' })).toBeVisible(); await expect(page).toHaveTitle('Stone Creek Pickleball');
   await expect(page.getByRole('button', { name: 'Create a game' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Join a game' })).toBeVisible();
-  await expect(page.locator('.logo svg[aria-label="Pickleball paddle and ball"]')).toBeVisible();
+  await expect(page.locator('.logo svg[aria-label="Pickleball"]')).toBeVisible();
   expect(await page.evaluate(() => document.body.innerText.includes('🏓'))).toBe(false);
   await page.screenshot({ path: 'e2e/shot-landing.png' });
   const now = new Date(); const at = (addDays: number, h: number, m: number) => { const d = new Date(now); d.setDate(d.getDate() + addDays); d.setHours(h, m, 0, 0); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -350,4 +350,30 @@ test('icons: manifest, favicon and apple-touch-icon load', async ({ page, reques
   }
   const m = await (await request.get(new URL('manifest.webmanifest', page.url()).toString())).json(); expect(m.icons.map((i: { src: string }) => i.src)).toContain('icon-512.png');
   await page.goto(new URL('icon-512.png', page.url()).toString()); await page.screenshot({ path: 'e2e/shot-icon-live.png' });
+});
+test('Share game: short /g/CODE link, native share, copy + QR fallback, deep link → Who are you?', async ({ page, browser }) => {
+  await page.addInitScript(() => { (window as unknown as { __shared: unknown[] }).__shared = []; Object.defineProperty(navigator, 'share', { configurable: true, value: async (d: unknown) => { (window as unknown as { __shared: unknown[] }).__shared.push(d); } }); });
+  await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Share test'); await page.getByLabel('Place').fill('Stone Creek');
+  await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game' }).click();
+  await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
+  const expected = new URL('g/' + code, BASE).toString();
+  // lobby: native share sheet gets the short link
+  await page.locator('.shareBig').click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __shared: { url: string }[] }).__shared.map(s => s.url))).toEqual([expected]);
+  // fallback sheet: QR + copy link
+  await page.getByRole('button', { name: 'QR', exact: true }).click();
+  const sheet = page.getByRole('dialog', { name: 'Share game' }); await expect(sheet.getByTestId('share-link')).toHaveText(expected);
+  await expect(sheet.locator('.qr svg')).toBeVisible(); await sheet.getByRole('button', { name: 'Copy link' }).click(); await expect(sheet.getByText('✓ Link copied')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-share.png' });
+  await sheet.getByRole('button', { name: 'Done' }).click();
+  // no native share → header button falls back to the sheet
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await ctx.addInitScript(() => { localStorage.setItem('pb:hidden', '1'); Object.defineProperty(navigator, 'share', { configurable: true, value: undefined }); });
+  const p2 = await ctx.newPage();
+  // deep link opens straight to "Who are you?"
+  await p2.goto(expected);
+  await expect(p2).toHaveURL(new RegExp('#/e/' + code + '/join$')); await expect(p2.getByText('Who are you?')).toBeVisible();
+  await p2.getByLabel('Player name').fill('Sharer'); await p2.getByText('Join this game').click();
+  await p2.getByRole('button', { name: '▶ Start game' }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await p2.getByRole('button', { name: 'Share game' }).first().click();
+  await expect(p2.getByRole('dialog', { name: 'Share game' }).getByTestId('share-link')).toHaveText(expected);
 });

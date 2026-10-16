@@ -12,6 +12,10 @@
     "deploy": "npm run build && cd dist && touch .nojekyll && git init -q -b gh-pages && git add -A && git commit -qm deploy && git push -f https://github.com/michaeldnbaker-ops/pickleball.git gh-pages"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/montserrat": "^5.3.0",
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

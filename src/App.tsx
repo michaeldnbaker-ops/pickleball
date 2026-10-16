@@ -2,9 +2,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 import { LOGO_SVG } from './logoSvg';
-const Logo = ({ size = 132 }: { size?: number }) => <span className="logoArt" style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: LOGO_SVG }} />;
+import QRCode from 'qrcode';
+/** Short share link built from the current origin + app base, so it follows a custom domain automatically. */
+export function gameLink(code: string) { const p = location.pathname; const i = p.indexOf('/g/'); const base = i >= 0 ? p.slice(0, i + 1) : p.replace(/[^/]*$/, ''); return location.origin + base + 'g/' + code; }
+const Logo = ({ size = 84 }: { size?: number }) => <span className="logoArt" style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: LOGO_SVG }} />;
 /** Small perforated pickleball glyph for buttons/tabs. */
-const Ball = () => <svg className="ballIcon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="#e7ff8c" stroke="#9cc81c" strokeWidth="1.5" />{[[10, 10], [6, 7.5], [14, 7.5], [6, 12.5], [14, 12.5], [10, 4.5], [10, 15.5]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="1.3" fill="#4d6b12" />)}</svg>;
+const Ball = () => <svg className="ballIcon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="#7CC242" stroke="#4E9A1E" strokeWidth="1.5" />{[[10, 10], [6, 7.5], [14, 7.5], [6, 12.5], [14, 12.5], [10, 4.5], [10, 15.5]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="1.3" fill="#2F6B12" />)}</svg>;
 
 const FORMATS: { id: Format; name: string; desc: string }[] = [
   { id: 'rotating', name: 'Round Robin', desc: 'Rotating partners — new partner every round, fewest repeats.' },
@@ -40,7 +43,7 @@ function Header({ title, back }: { title: string; back?: string }) {
 
 function Home() {
   return <div className="page landing">
-    <div className="logo"><Logo /><h1>Dink Day</h1></div>
+    <div className="logo"><Logo size={84} /><h1 className="wordmark" aria-label="Stone Creek Pickleball"><span className="wm1">STONE CREEK</span><span className="wm2">PICKLEBALL</span><span className="rule" aria-hidden="true" /></h1></div>
     <div className="landBtns">
       <button className="big primary huge" onClick={() => go('new')}>Create a game</button>
       <button className="big huge secondary" onClick={() => go('join')}>Join a game</button>
@@ -198,7 +201,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const [ev, setEv] = useState<EventT | null>(S.localEvent(code));
   const [online, setOnline] = useState(true); const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(joining || S.getMe(code) ? 'me' : 'courts');
-  const [stamp, setStamp] = useState<Date | null>(null);
+  const [stamp, setStamp] = useState<Date | null>(null); const [sharing, setSharing] = useState(false);
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
   usePullToRefresh(refresh);
@@ -211,7 +214,9 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
   return <div className="page withtabs">
     <header><button className="ghost" onClick={() => go('')}>‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
+      <button className="ghost hdrShare" onClick={() => shareGame(ev, code, () => setSharing(true))} aria-label="Share game"><ShareIcon /></button>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : '⟳'}</button></header>
+    {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <div className={'status ' + (online ? '' : 'off')}>{online ? (stamp ? 'Updated ' + stamp.toLocaleTimeString([], { timeStyle: 'short' }) + ' · pull down or tap ⟳ to refresh' : '') : 'Offline — changes saved on this phone, will upload when back online'}</div>
     {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} />}
     {tab === 'me' && <Me ev={ev} code={code} nm={nm} act={act} />}
@@ -361,14 +366,15 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
 }
 
 function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
-  const link = location.origin + location.pathname + '#/e/' + code;
-  const share = async () => { try { if (navigator.share) await navigator.share({ title: ev.name, url: link }); else { await navigator.clipboard.writeText(link); alert('Link copied'); } } catch { /* cancelled */ } };
+  const link = gameLink(code);
+  const [sharing, setSharing] = useState(false);
   const regen = canRegenerate(ev);
   const download = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([toCSV(ev)], { type: 'text/csv' })); a.download = ev.name.replace(/\W+/g, '_') + '.csv'; a.click(); };
   const unit = unitSize(ev.format);
   const [dropping, setDropping] = useState<string | null>(null);
   return <div>
-    <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><button className="primary full" onClick={share}>📤 Share link</button></div>
+    <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button><button onClick={() => setSharing(true)}>QR code</button></div></div>
+    {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {!ev.finished && <button className="big dropBig" onClick={() => setDropping('')}>🚑 Drop player (injured / left)</button>}
     {dropping !== null && <DropSheet ev={ev} act={act} nm={id => ev.players.find(p => p.id === id)?.name || '?'} pid={dropping || undefined} onClose={() => setDropping(null)} />}
     <h2>Players ({ev.active.length} playing)</h2>
@@ -425,8 +431,8 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
   const joined = ev.players.filter(p => ev.active.includes(p.id));
   const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me));
-  const w = fmtWhen(ev.date); const link = location.origin + location.pathname + '#/e/' + code + '/join';
-  const share = async () => { try { if (navigator.share) await navigator.share({ title: ev.name, url: link }); else { await navigator.clipboard.writeText(link); alert('Link copied'); } } catch { /* cancelled */ } };
+  const w = fmtWhen(ev.date); const link = gameLink(code);
+  const [sharing, setSharing] = useState(false);
   return <div className="page">
     <header><button className="ghost" onClick={() => go('')} aria-label="Back">‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : '⟳'}</button></header>
@@ -441,7 +447,8 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     <h2>Players ({joined.length})</h2>
     <div className="chips">{joined.map(p => <span key={p.id} className={'chip static' + (p.id === me ? ' on' : '')}>{p.name}</span>)}</div>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
-    <button className="big" onClick={share}>📤 Share sign-up link</button>
+    <div className="row shareRow"><button className="big primary shareBig" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button><button className="big qrBtn" onClick={() => setSharing(true)}>QR</button></div>
+    {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
       <p>Round 1 is drawn now from everyone who has joined{joined.length % 4 ? `; ${Math.max(0, joined.length - Math.min(ev.courts, Math.floor(joined.length / 4)) * 4)} sit out each round in fair rotation` : ''}. Late arrivals can still join and get slotted into upcoming rounds.</p>
@@ -484,4 +491,27 @@ function PairBuilder({ ev, act }: { ev: EventT; act: Act }) {
       <button className="ghost small" aria-label={'Unpair ' + nm(t[0]) + ' and ' + nm(t[1])} onClick={() => act(e => { e.teams = (e.teams || []).filter(x => x.join() !== t.join()); })}>✕</button></div>)}
     {free.length > 0 && <div className="chips">{free.map(p => <button key={p.id} className={'chip ' + (first === p.id ? 'on' : '')} onClick={() => tap(p.id)}>{p.name}</button>)}</div>}
   </div>;
+}
+
+const ShareIcon = () => <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 8l5-5 5 5" /><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" /></svg>;
+/** Native share sheet first; fall back to the in-app sheet (copy link + QR) if unavailable or it fails. */
+async function shareGame(ev: EventT, code: string, fallback: () => void) {
+  const url = gameLink(code); const w = fmtWhen(ev.date);
+  const text = `${ev.name} — ${w.day} ${w.time}${ev.place ? ' at ' + ev.place : ''}. Tap to join:`;
+  if (navigator.share) { try { await navigator.share({ title: ev.name, text, url }); return; } catch (e) { if ((e as Error)?.name === 'AbortError') return; } }
+  fallback();
+}
+function ShareGame({ ev, code, onClose }: { ev: EventT; code: string; onClose: () => void }) {
+  const url = gameLink(code); const [qr, setQr] = useState(''); const [copied, setCopied] = useState(false);
+  useEffect(() => { QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M', color: { dark: '#0B2545', light: '#FFFFFF' } }).then(setQr).catch(() => setQr('')); }, [url]);
+  const copy = async () => { try { await navigator.clipboard.writeText(url); } catch { const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); } setCopied(true); };
+  return <div className="sheetBg" onClick={onClose}><div className="sheet shareSheet" role="dialog" aria-modal="true" aria-labelledby="sh-t" onClick={e => e.stopPropagation()}>
+    <h2 id="sh-t">Share game</h2>
+    <p className="muted">{ev.name} · code <b>{code}</b>. Friends open the link (or scan) and pick their name.</p>
+    <div className="qr" role="img" aria-label="QR code for the game link" dangerouslySetInnerHTML={{ __html: qr }} />
+    <div className="linkBox" data-testid="share-link">{url}</div>
+    <button className="big primary" onClick={copy}>{copied ? '✓ Link copied' : 'Copy link'}</button>
+    {'share' in navigator && <button className="big" onClick={() => shareGame(ev, code, () => {})}>More sharing options…</button>}
+    <button className="big" onClick={onClose}>Done</button>
+  </div></div>;
 }
