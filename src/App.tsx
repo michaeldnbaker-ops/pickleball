@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
+import { LOGO_SVG } from './logoSvg';
+const Logo = ({ size = 132 }: { size?: number }) => <span className="logoArt" style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: LOGO_SVG }} />;
+/** Small perforated pickleball glyph for buttons/tabs. */
+const Ball = () => <svg className="ballIcon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="#e7ff8c" stroke="#9cc81c" strokeWidth="1.5" />{[[10, 10], [6, 7.5], [14, 7.5], [6, 12.5], [14, 12.5], [10, 4.5], [10, 15.5]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="1.3" fill="#4d6b12" />)}</svg>;
 
 const FORMATS: { id: Format; name: string; desc: string }[] = [
   { id: 'rotating', name: 'Round Robin', desc: 'Rotating partners — new partner every round, fewest repeats.' },
@@ -36,7 +40,7 @@ function Header({ title, back }: { title: string; back?: string }) {
 
 function Home() {
   return <div className="page landing">
-    <div className="logo"><div className="ball" aria-hidden="true">🏓</div><h1>Dink Day</h1></div>
+    <div className="logo"><Logo /><h1>Dink Day</h1></div>
     <div className="landBtns">
       <button className="big primary huge" onClick={() => go('new')}>Create a game</button>
       <button className="big huge secondary" onClick={() => go('join')}>Join a game</button>
@@ -64,7 +68,7 @@ function Join() {
     <h2>Upcoming games</h2>
     {list === null && !err && <p className="muted">Loading games…</p>}
     {err && <p className="warn">Couldn't load the games list (offline?). Use a code below.</p>}
-    {list?.length === 0 && <div className="card empty"><div className="emptyIcon" aria-hidden="true">🏓</div><b>No current games</b><p className="muted">Nobody has set up a game yet. Start one and share the link.</p><button className="big primary" onClick={() => go('new')}>Create a game</button></div>}
+    {list?.length === 0 && <div className="card empty"><div className="emptyIcon"><Logo size={72} /></div><b>No current games</b><p className="muted">Nobody has set up a game yet. Start one and share the link.</p><button className="big primary" onClick={() => go('new')}>Create a game</button></div>}
     <div className="gameList">{list?.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code + '/join')} />)}</div>
     {mine.length > 0 && <><h2>My recent games</h2>{mine.map(g => <GameCard key={g.code} g={g} onClick={() => go('e/' + g.code)} />)}</>}
     <div className="card"><label htmlFor="join-code">Have a code or link?</label>
@@ -181,7 +185,7 @@ function NewEvent() {
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
       <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>
-      <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy} onClick={create}>Create game 🏓</button></div></>}
+      <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
 }
 
@@ -214,7 +218,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
     {tab === 'schedule' && <Schedule ev={ev} nm={nm} act={act} />}
     {tab === 'standings' && <Standings ev={ev} />}
     {tab === 'manage' && <Manage ev={ev} code={code} act={act} />}
-    <nav className="tabs">{(['courts', 'me', 'schedule', 'standings', 'manage'] as Tab[]).map(t => <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); scrollTo(0, 0); }}>{{ courts: '🏓 Courts', me: '🙋 Me', schedule: '📋 Rounds', standings: '🏆 Standings', manage: '⚙️ Manage' }[t]}</button>)}</nav>
+    <nav className="tabs">{(['courts', 'me', 'schedule', 'standings', 'manage'] as Tab[]).map(t => <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); scrollTo(0, 0); }}>{{ courts: <><Ball /> Courts</>, me: '🙋 Me', schedule: '📋 Rounds', standings: '🏆 Standings', manage: '⚙️ Manage' }[t]}</button>)}</nav>
   </div>;
 }
 

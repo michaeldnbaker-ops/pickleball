@@ -4,7 +4,7 @@ const BASE = process.env.BASE || 'http://localhost:4173/';
 // test-created games are flagged hidden so they never show in the public Join list or all-time stats
 test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('pb:hidden', '1')); });
 const startGame = async (page: import('@playwright/test').Page) => {
-  await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  await page.getByRole('button', { name: 'Create game' }).click();
   await page.getByRole('button', { name: '▶ Start game' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
 };
@@ -45,7 +45,7 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await expect(p2.getByText('Latecomer')).toBeVisible();
   const box = await page.locator('.tabs button').first().boundingBox(); expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: 'e2e/shot-manage.png' });
-  await page.getByText('🏓 Courts').click(); await page.screenshot({ path: 'e2e/shot-courts.png' });
+  await page.locator('.tabs button').first().click(); await page.screenshot({ path: 'e2e/shot-courts.png' });
   await p2.getByText('🙋 Me').click(); await p2.screenshot({ path: 'e2e/shot-me.png' });
 });
 test('KOTC and playoffs reach a champion', async ({ page }) => {
@@ -118,7 +118,7 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   // pick Me = first player on court 1
   const meName = (await c1.locator('.side').first().locator('.names > div').first().textContent())!.trim();
   await page.getByText('🙋 Me').click(); await page.getByRole('button', { name: meName, exact: true }).click();
-  await page.getByText('🏓 Courts').click();
+  await page.locator('.tabs button').first().click();
   await expect(page.locator('.match.mine')).toHaveCount(1);
   await expect(page.locator('.match.mine .tag')).toHaveText('You & partner');
   await page.screenshot({ path: 'e2e/shot-round.png' });
@@ -179,7 +179,7 @@ test('play ahead locks a round; drop at 9 (replace) and 8 (void); re-add', async
   await page.screenshot({ path: 'e2e/shot-drop-sheet.png' });
   await sheet.getByRole('button', { name: 'Drop ' + victim1 }).click();
   await expect(page.locator('.card', { hasText: victim1 }).locator('.wd')).toHaveText('withdrawn');
-  await page.getByText('🏓 Courts').click();
+  await page.locator('.tabs button').first().click();
   await expect(page.locator('.match').first()).toContainText(sitter); await expect(page.locator('.card.bye')).toHaveCount(0);
   // drop at 8 from a name on a card: no sit-outs left, so void the court
   const victim2 = (await page.locator('.match').nth(1).locator('.nameBtn').first().textContent())!.trim();
@@ -196,7 +196,7 @@ test('play ahead locks a round; drop at 9 (replace) and 8 (void); re-add', async
   // standings keep withdrawn player; re-add returns him to upcoming rounds
   await page.getByText('🏆 Standings').click(); await expect(page.locator('tr', { hasText: victim1 }).locator('.wd')).toBeVisible();
   await page.getByText('⚙️ Manage').click(); await page.locator('.card', { hasText: victim2 }).getByText('↩ Re-add').click();
-  await page.getByText('🏓 Courts').click(); await page.getByLabel('Next round').click();
+  await page.locator('.tabs button').first().click(); await page.getByLabel('Next round').click();
   await page.getByText('🙋 Me').click(); await page.getByRole('button', { name: victim2, exact: true }).click();
   await expect(page.locator('.compact', { hasText: 'upcoming' }).first()).toBeVisible();
 });
@@ -216,6 +216,8 @@ test('landing, Join list + empty state (mocked), time wheel', async ({ page }) =
   await page.goto(BASE);
   await expect(page.locator('.landBtns button')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Create a game' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Join a game' })).toBeVisible();
+  await expect(page.locator('.logo svg[aria-label="Pickleball paddle and ball"]')).toBeVisible();
+  expect(await page.evaluate(() => document.body.innerText.includes('🏓'))).toBe(false);
   await page.screenshot({ path: 'e2e/shot-landing.png' });
   const now = new Date(); const at = (addDays: number, h: number, m: number) => { const d = new Date(now); d.setDate(d.getDate() + addDays); d.setHours(h, m, 0, 0); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
   const thu = (4 - now.getDay() + 7) % 7, sun = (7 - now.getDay()) % 7 || 7;
@@ -229,6 +231,7 @@ test('landing, Join list + empty state (mocked), time wheel', async ({ page }) =
   await page.screenshot({ path: 'e2e/shot-join-list.png' });
   await page.unroute(API + '/events*'); await page.route(API + '/events*', r => r.fulfill({ json: { events: [] } }));
   await page.reload(); await expect(page.getByText('No current games')).toBeVisible();
+  expect(await page.evaluate(() => document.body.innerText.includes('🏓'))).toBe(false);
   await page.screenshot({ path: 'e2e/shot-join-empty.png' });
   await page.locator('.empty').getByRole('button', { name: 'Create a game' }).click();
   // calendar + wheels
@@ -251,7 +254,7 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click();
   await page.locator('.stepper').first().getByText('−').click(); // 2 courts
   for (let i = 0; i < 6; i++) await page.locator('.stepper').nth(1).getByText('−').click(); // 2 rounds
-  await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
   // players sign up by name from the Join list
   const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await ctx.addInitScript(() => localStorage.setItem('pb:hidden', '1')); const p2 = await ctx.newPage();
@@ -284,7 +287,7 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   await c0.getByText('Edit score').click(); await c0.getByLabel('Team A score').fill('11'); await c0.getByLabel('Team B score').fill('9'); await c0.getByText('Save score').click(); await expect(c0.locator('.final')).toBeVisible();
   // End early from Manage
   await page.getByText('⚙️ Manage').click(); page.once('dialog', d => d.accept()); await page.getByRole('button', { name: '🏁 End early' }).click();
-  await page.getByText('🏓 Courts').click(); await expect(page.getByText('Event finished')).toBeVisible();
+  await page.locator('.tabs button').first().click(); await expect(page.getByText('Event finished')).toBeVisible();
   await page.getByText('🏆 Standings').click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(4).textContent())!.trim();
   // all-time stats
   await page.goto(BASE + '#/stats'); const row = page.locator('tr', { hasText: winner });
@@ -311,7 +314,7 @@ test('long names show fully; no M/F anywhere; DUPR optional', async ({ page }) =
   for (const n of ['Bo', 'Cy', 'Di', 'Ed']) { await page.getByLabel('Player name').fill(n); await page.getByLabel('DUPR (optional)').fill('3.5'); await page.getByText('Add new player').click(); }
   await expect(page.getByRole('button', { name: long })).toBeVisible();
   await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel('Balance matchups by DUPR').check();
-  await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('5 joined')).toBeVisible();
   const chip = page.locator('.chip.static', { hasText: long }); await expect(chip).toHaveText(long);
   expect(await chip.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
@@ -329,7 +332,7 @@ test('Mixed Doubles: organizer sets pairs in the lobby, pairs stay together', as
   await page.getByText('Next: Players').click();
   for (const n of ['Ann', 'Bob', 'Cat', 'Dan']) { await page.getByLabel('Player name').fill(n); await page.getByText('Add new player').click(); }
   await expect(page.locator('select')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game 🏓' }).click();
+  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game' }).click();
   const pb = page.locator('.pairs'); await pb.getByRole('button', { name: 'Ann', exact: true }).click(); await pb.getByRole('button', { name: 'Dan', exact: true }).click();
   await expect(pb.locator('.pairRow')).toHaveText(/Ann & Dan/);
   await page.screenshot({ path: 'e2e/shot-mixed-pairs.png' });
@@ -337,4 +340,14 @@ test('Mixed Doubles: organizer sets pairs in the lobby, pairs stay together', as
   const together = () => page.locator('.match .side .names').allTextContents().then(a => a.some(t => t.includes('Ann') && t.includes('Dan')));
   await expect(page.locator('.match')).toHaveCount(1); await expect.poll(together).toBe(true);
   await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible(); await expect.poll(together).toBe(true);
+});
+
+test('icons: manifest, favicon and apple-touch-icon load', async ({ page, request }) => {
+  await page.goto(BASE);
+  const href = (sel: string) => page.locator(sel).getAttribute('href');
+  for (const h of [await href('link[rel="apple-touch-icon"]'), await href('link[rel="icon"][type="image/svg+xml"]'), await href('link[rel="manifest"]'), 'icon-192.png', 'icon-512.png']) {
+    const r = await request.get(new URL(h!, page.url()).toString()); expect(r.ok()).toBe(true);
+  }
+  const m = await (await request.get(new URL('manifest.webmanifest', page.url()).toString())).json(); expect(m.icons.map((i: { src: string }) => i.src)).toContain('icon-512.png');
+  await page.goto(new URL('icon-512.png', page.url()).toString()); await page.screenshot({ path: 'e2e/shot-icon-live.png' });
 });
