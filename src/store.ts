@@ -71,3 +71,9 @@ export const setOrg = (code: string) => LS.setItem('pb:org:' + code, '1');
 export async function listPast(): Promise<Listed[]> { const r = await fetch(`${API}/past?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).events; }
 export const setTab = (code: string, t: string) => sessionStorage.setItem('pb:tab:' + code, t);
 export const takeTab = (code: string) => { const t = sessionStorage.getItem('pb:tab:' + code); sessionStorage.removeItem('pb:tab:' + code); return t; };
+/** Creator cancels an unstarted game: deleted on the server for everyone. */
+export async function deleteRemote(code: string) {
+  const r = await fetch(`${API}/e/${code}`, { method: 'DELETE' });
+  if (r.status === 409) throw new Error('started'); if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+  LS.removeItem('pb:ev:' + code); LS.removeItem('pb:dirty:' + code);
+}

@@ -149,3 +149,10 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .liveNote{background:transparent;font-weight:600}
 .createTop{margin:4px 0 8px}
 .joinPill{background:var(--blue,#2E6BB8);color:#fff;font-weight:800;border-radius:999px;padding:8px 16px;align-self:center;white-space:nowrap}
+.lobbyList{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:6px}
+.lobbyRow{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 6px 4px 14px;border:1px solid var(--line);border-radius:12px;background:var(--skySoft);font-weight:600}
+.lobbyRow.on{border-color:var(--sky)}
+.lobbyRow .tag{margin-left:8px}
+.lobbyRow button{min-height:36px}
+.cancelGame{margin-top:18px}
+.lobbyRow .grow{overflow-wrap:anywhere;min-width:0}

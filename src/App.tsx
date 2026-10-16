@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { nameTaken, removePlayer } from './engine/lobby';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
@@ -447,6 +448,11 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
   const joined = ev.players.filter(p => ev.active.includes(p.id));
   const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me)); const ok = startOk(joined.length);
+  const org = S.isOrg(code);
+  const drop = (id: string, name: string, self: boolean) => { if (!confirm(self ? 'Drop out of this game?' : 'Remove ' + name + ' from this game?')) return;
+    act(e => { removePlayer(e, id); }).then(() => { if (self) pick(''); }); };
+  const cancelGame = async () => { if (!confirm('Cancel and delete this game for everyone? This can\'t be undone.')) return;
+    try { await S.deleteRemote(code); S.forget(code); go(''); } catch (e) { alert(String(e).includes('started') ? 'This game already started and can no longer be cancelled.' : 'Could not cancel (offline?). Try again.'); } };
   const w = fmtWhen(ev.date); const link = gameLink(code);
   const [sharing, setSharing] = useState(false);
   return <div className="page">
@@ -456,12 +462,15 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
-    {!me && <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />}
+    {!me && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name)) return; e.players.push(p); e.active.push(p.id); }).then(() => { if (S.localEvent(code)?.players.some(x => x.id === p.id)) pick(p.id); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
-    <div className="chips">{joined.map(p => <span key={p.id} className={'chip static' + (p.id === me ? ' on' : '')}>{p.name}</span>)}</div>
+    <ul className="lobbyList">{joined.map(p => <li key={p.id} className={'lobbyRow' + (p.id === me ? ' on' : '')}><span className="grow">{p.name}{p.id === me && <span className="tag">You</span>}</span>
+      {p.id === me ? <button className="ghost small danger dropBtn" onClick={() => drop(p.id, p.name, true)}>Drop out</button>
+        : org && <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name, false)}>✕</button>}</li>)}</ul>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
+    {org && <button className="big danger cancelGame" onClick={cancelGame}>Cancel game</button>}
     <div className="row shareRow"><button className="big primary shareBig" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>

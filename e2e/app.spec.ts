@@ -330,7 +330,7 @@ test('long names show fully; no M/F anywhere; DUPR optional', async ({ page }) =
   await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel('Balance matchups by DUPR').check();
   await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('8 joined')).toBeVisible();
-  const chip = page.locator('.chip.static', { hasText: long }); await expect(chip).toHaveText(long);
+  const chip = page.locator('.lobbyRow .grow', { hasText: long }); await expect(chip).toHaveText(long);
   expect(await chip.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await expect(page.getByLabel('Player name')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-lobby-names.png', fullPage: true });
@@ -473,6 +473,54 @@ test('Join flow: only Create + game list; pick a game → Join → enter name', 
   await expect(p.getByText('Add yourself to this game')).toBeVisible(); await expect(p.getByLabel('Player name')).toBeFocused();
   await p.screenshot({ path: 'e2e/shot-flow-2-enter-name.png' });
   await p.keyboard.type('Flow-' + tag); await p.getByRole('button', { name: 'Join', exact: true }).click();
-  await expect(p.getByText("You're in as")).toBeVisible(); await expect(p.locator('.chip.static', { hasText: 'Flow-' + tag })).toBeVisible();
+  await expect(p.getByText("You're in as")).toBeVisible(); await expect(p.locator('.lobbyRow', { hasText: 'Flow-' + tag })).toBeVisible();
   await p.screenshot({ path: 'e2e/shot-flow-3-joined.png' });
+});
+
+test('lobby: drop out, creator removes / cancels, duplicate names blocked, roster locked after start', async ({ page, browser }) => {
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const code = 'DO' + tag;
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const players = ['Ann', 'Bob', 'Cat'].map((n, i) => ({ id: 'p' + i, name: n }));
+  const r0 = await page.request.put(API + '/e/' + code, { data: { data: { id: code, name: 'Dropout test ' + tag, date: d, place: 'Stone Creek', format: 'rotating', courts: 1, totalRounds: 3, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), hidden: true } } });
+  expect(r0.ok()).toBe(true);
+  // API refuses a second "ann" (trimmed, any case) before the start
+  const dup = await page.request.put(API + '/e/' + code, { data: { data: { id: code, name: 'Dropout test ' + tag, date: d, place: 'Stone Creek', format: 'rotating', courts: 1, totalRounds: 3, balanceDupr: false, seeding: 'random', players: [...players, { id: 'x', name: ' ANN ' }], active: [...players.map(p => p.id), 'x'], teams: [], rounds: [], hidden: true } } });
+  expect(dup.status()).toBe(409);
+  // Player device: join form blocks a duplicate name with a friendly message
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p = await ctx.newPage();
+  const msgs: string[] = []; p.on('dialog', dl => { msgs.push(dl.message()); dl.accept(); });
+  await p.goto(BASE + '#/e/' + code + '/join');
+  await p.getByLabel('Player name').fill('  bob '); await p.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect.poll(() => msgs.join()).toContain('already in this game');
+  await expect(p.locator('.lobbyRow')).toHaveCount(3);
+  // Join as Dee, then drop out (only own row has Drop out; non-creator sees no ✕)
+  await p.getByLabel('Player name').fill('Dee'); await p.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect(p.locator('.lobbyRow')).toHaveCount(4); await expect(p.locator('.lobbyRow', { hasText: 'Dee' }).getByRole('button', { name: 'Drop out' })).toBeVisible();
+  await expect(p.getByRole('button', { name: /^Remove / })).toHaveCount(0); await expect(p.getByRole('button', { name: 'Cancel game' })).toHaveCount(0);
+  await p.getByRole('button', { name: 'Drop out' }).click();
+  await expect(p.locator('.lobbyRow')).toHaveCount(3); await expect(p.getByText('Add yourself to this game')).toBeVisible();
+  // Creator device: ✕ next to others, remove Cat, screenshot, then cancel the whole game
+  page.on('dialog', dl => dl.accept());
+  await page.addInitScript(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code);
+  await expect(page.getByRole('button', { name: 'Remove Cat' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Cancel game' })).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-lobby-dropout-remove.png', fullPage: true });
+  await page.getByRole('button', { name: 'Remove Cat' }).click();
+  await expect(page.locator('.lobbyRow')).toHaveCount(2);
+  expect(((await (await page.request.get(API + '/e/' + code)).json()).data.players as { name: string }[]).map(x => x.name)).toEqual(['Ann', 'Bob']);
+  await page.getByRole('button', { name: 'Cancel game' }).click();
+  await expect(page.getByText('Create a game')).toBeVisible();
+  expect((await page.request.get(API + '/e/' + code)).status()).toBe(404);
+  await ctx.close();
+});
+
+test('API: started games cannot be deleted or have players removed', async ({ request }) => {
+  const code = 'DS' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const players = ['A', 'B', 'C', 'D'].map((n, i) => ({ id: 'q' + i, name: n })); const base = { id: code, name: 'Delstart test', date: '2026-10-17T09:00', place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', teams: [], hidden: true };
+  const rounds = [{ n: 1, matches: [{ court: 1, a: ['q0', 'q1'], b: ['q2', 'q3'] }], byes: [] }];
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, players, active: players.map(p => p.id), rounds, startedAt: 1, startedBy: 'q0' } } })).ok()).toBe(true);
+  expect((await request.delete(API + '/e/' + code)).status()).toBe(409);
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, players: players.slice(0, 3), active: ['q0', 'q1', 'q2'], rounds, startedAt: 1, startedBy: 'q0' } } })).status()).toBe(409);
+  // cleanup: finish it so it never shows in Join (hidden anyway)
+  await request.put(API + '/e/' + code + '?by=q0', { data: { data: { ...base, players, active: players.map(p => p.id), rounds, startedAt: 1, startedBy: 'q0', finished: true } } });
 });
