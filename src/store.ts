@@ -24,7 +24,7 @@ export async function fetchRemote(code: string): Promise<EventT | null> {
 }
 export class StartedError extends Error { constructor() { super('started'); } }
 export async function pushRemote(code: string, ev: EventT) {
-  const r = await fetch(`${API}/e/${code}${isOrg(code) ? '?org=1' : ''}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
+  const r = await fetch(`${API}/e/${code}?by=${encodeURIComponent(getMe(code) || (isOrg(code) ? 'organizer' : ''))}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
   if (r.status === 409) throw new StartedError();
   if (!r.ok) throw new Error('HTTP ' + r.status);
 }
@@ -68,3 +68,6 @@ export async function statsBoard(): Promise<Stat[]> { const r = await fetch(`${A
 export async function statsPlayer(name: string): Promise<StatMatch[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).matches; }
 export const isOrg = (code: string) => LS.getItem('pb:org:' + code) === '1';
 export const setOrg = (code: string) => LS.setItem('pb:org:' + code, '1');
+export async function listPast(): Promise<Listed[]> { const r = await fetch(`${API}/past?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).events; }
+export const setTab = (code: string, t: string) => sessionStorage.setItem('pb:tab:' + code, t);
+export const takeTab = (code: string) => { const t = sessionStorage.getItem('pb:tab:' + code); sessionStorage.removeItem('pb:tab:' + code); return t; };

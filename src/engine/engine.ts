@@ -296,3 +296,6 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
 /** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
 export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
 export function endEvent(ev: EventT) { ev.finished = true; delete ev.plan; delete ev.planKey; }
+
+/** A game can start only with 4, 8, 12, 16… players. */
+export const startOk = (n: number) => n >= 4 && n % 4 === 0;

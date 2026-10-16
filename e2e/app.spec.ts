@@ -22,20 +22,20 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await page.getByText('Create a game').click();
   await page.getByPlaceholder('e.g. the gym').fill('Gym');
   await page.getByText('Next: Players').click();
-  for (let i = 1; i <= 9; i++) { await page.getByPlaceholder('Name').fill('Player' + i); await page.getByLabel('DUPR (optional)').fill(String(3 + i / 10)); await page.getByText('Add new player').click(); }
-  await expect(page.getByText('9 selected')).toBeVisible();
+  for (let i = 1; i <= 8; i++) { await page.getByPlaceholder('Name').fill('Player' + i); await page.getByLabel('DUPR (optional)').fill(String(3 + i / 10)); await page.getByText('Add new player').click(); }
+  await expect(page.getByText('8 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Next ›' }).click();
   await startGame(page);
   await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
   await expect(page.locator('.match')).toHaveCount(2);
-  await expect(page.getByText('Sitting out', { exact: true })).toBeVisible();
+  await expect(page.getByText('Sitting out', { exact: true })).toHaveCount(0);
   const code = page.url().split('/e/')[1];
   // score both courts independently
   for (let c = 0; c < 2; c++) { const card = page.locator('.match').nth(c); await card.locator('.scorebox input').first().fill('11'); await card.locator('.scorebox').nth(1).locator('input').fill(String(5 + c)); await card.getByText('Save').click(); await expect(page.locator('.match').nth(c).locator('.final')).toBeVisible(); if (c === 0) await page.waitForTimeout(300); }
   await page.getByRole('button', { name: /Next: Round 2/ }).click();
   await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
   await page.getByRole('button', { name: 'Standings', exact: true }).click();
-  await expect(page.locator('tbody tr')).toHaveCount(9);
+  await expect(page.locator('tbody tr')).toHaveCount(8);
   // player phone
   const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); const p2 = await ctx.newPage();
   await p2.goto(BASE + '#/e/' + code);
@@ -43,14 +43,9 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await p2.getByRole('button', { name: 'Player3', exact: true }).click();
   await expect(p2.getByText('Hi, Player3')).toBeVisible();
   await expect(p2.locator('.next')).toBeVisible();
-  // organizer adds late player; player refreshes and sees him
+  // roster is locked after the start: no add / drop controls in Manage
   await page.getByRole('button', { name: 'Manage', exact: true }).click();
-  await page.getByPlaceholder('Name').fill('Latecomer'); await page.getByText('Add late player').click();
-  await expect(page.getByText('Latecomer').first()).toBeVisible();
-  await page.waitForTimeout(1500);
-  await p2.getByLabel('Refresh').click();
-  await p2.getByRole('button', { name: 'Standings', exact: true }).click();
-  await expect(p2.getByText('Latecomer')).toBeVisible();
+  await expect(page.getByText('Roster locked')).toBeVisible(); await expect(page.getByText('Add late player')).toHaveCount(0); await expect(page.getByRole('button', { name: /Drop/ })).toHaveCount(0);
   const box = await page.locator('.tabs button').first().boundingBox(); expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: 'e2e/shot-manage.png' });
   await page.locator('.tabs button').first().click(); await page.screenshot({ path: 'e2e/shot-courts.png' });
@@ -109,9 +104,10 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   await page.goto(BASE + '#/new');
   await page.getByLabel('Place').fill('Stone Creek');
   await page.getByText('Next: Players').click();
-  const names = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy'];
+  const names = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'];
   for (const n of names) { await page.getByLabel('Player name').fill(n); await page.getByText('Add new player').click(); }
   await page.getByRole('button', { name: 'Next ›' }).click();
+  await page.locator('.stepper').first().getByText('−').click(); // 2 courts → 4 rotate out each round
   for (let i = 0; i < 2; i++) await page.locator('.stepper').nth(1).getByText('−').click(); // 6 rounds
   await startGame(page);
   await expect(page.getByRole('heading', { name: 'Round 1 of 6' })).toBeVisible();
@@ -169,57 +165,17 @@ const setup = async (page: import('@playwright/test').Page, names: string[], cou
   await expect(page.getByRole('heading', { name: new RegExp('Round 1 of ' + rounds) })).toBeVisible();
 };
 const roundNames = async (page: import('@playwright/test').Page) => (await page.locator('.match .names').allTextContents()).join(' ');
-test('play ahead locks a round; drop at 9 (replace) and 8 (void); re-add', async ({ page }) => {
-  await setup(page, ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy']);
+test('play ahead locks a round', async ({ page }) => {
+  await setup(page, ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'], 1);
   // play ahead: Court 1 of Round 3 finishes early
   await page.locator('.strip .dot').nth(2).click(); await expect(page.getByRole('heading', { name: 'Round 3 of 6' })).toBeVisible();
   const r3 = await roundNames(page);
   const c = page.locator('.match').first(); await c.getByLabel('Team A score').fill('11'); await c.getByLabel('Team B score').fill('9'); await c.getByText('Save score').click();
   await expect(page.getByText(/Playing ahead · pairings locked/)).toBeVisible(); await expect(c.locator('.final')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-playahead.png' });
-  await page.getByText('Back to current round').click();
-  // drop at 9 from Manage: out now, replaced by the sit-out
-  const sitter = (await page.locator('.byeNames').textContent())!.trim();
-  const victim1 = (await page.locator('.match').first().locator('.nameBtn').first().textContent())!.trim();
-  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByRole('button', { name: /Drop player/ }).click();
-  const sheet = page.getByRole('dialog'); await sheet.getByRole('button', { name: victim1, exact: true }).click();
-  await expect(sheet.getByText('Out now')).toBeVisible(); await expect(sheet.getByText('player short')).toBeVisible();
-  await expect(sheet.getByRole('button', { name: sitter, exact: true })).toHaveClass(/on/);
-  await page.screenshot({ path: 'e2e/shot-drop-sheet.png' });
-  await sheet.getByRole('button', { name: 'Drop ' + victim1 }).click();
-  await expect(page.locator('.card', { hasText: victim1 }).locator('.wd')).toHaveText('withdrawn');
-  await page.locator('.tabs button').first().click();
-  await expect(page.locator('.match').first()).toContainText(sitter); await expect(page.locator('.card.bye')).toHaveCount(0);
-  // drop at 8 from a name on a card: no sit-outs left, so void the court
-  const victim2 = (await page.locator('.match').nth(1).locator('.nameBtn').first().textContent())!.trim();
-  await page.locator('.match').nth(1).getByRole('button', { name: 'Player ' + victim2 + ' options' }).click();
-  const s2 = page.getByRole('dialog'); await expect(s2.getByText('Replace with a sit-out')).toHaveCount(0);
-  await s2.getByText('Void Court 2').click(); await s2.getByRole('button', { name: 'Drop ' + victim2 }).click();
-  await expect(page.locator('.match')).toHaveCount(1); await expect(page.locator('.card.bye')).toBeVisible();
-  // future unscored rounds redrawn without both; locked round 3 unchanged
-  await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: 'Round 2 of 6' })).toBeVisible();
-  const r2 = await roundNames(page); expect(r2).not.toContain(victim1); expect(r2).not.toContain(victim2);
-  await expect(page.locator('.match')).toHaveCount(1); await expect(page.locator('.card.bye .byeNames')).toBeVisible();
-  await page.screenshot({ path: 'e2e/shot-after-drop.png' });
-  await page.getByLabel('Next round').click(); expect(await roundNames(page)).toBe(r3);
-  // standings keep withdrawn player; re-add returns him to upcoming rounds
-  await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('tr', { hasText: victim1 }).locator('.wd')).toBeVisible();
-  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.locator('.card', { hasText: victim2 }).getByText('Re-add').click();
-  await page.locator('.tabs button').first().click(); await page.getByLabel('Next round').click();
-  await page.getByRole('button', { name: 'Me', exact: true }).click(); await page.getByRole('button', { name: victim2, exact: true }).click();
-  await expect(page.locator('.compact', { hasText: 'upcoming' }).first()).toBeVisible();
+  await page.getByText('Back to current round').click(); await expect(page.locator('.match .nameBtn')).toHaveCount(0); // tapping names no longer opens a drop sheet
+  await page.locator('.strip .dot').nth(2).click(); expect(await roundNames(page)).toBe(r3);
 });
-test('drop at 5 on one court: from next round on, 4 left play every round', async ({ page }) => {
-  await setup(page, ['Ann', 'Bob', 'Cat', 'Dan', 'Eve'], 2, 4);
-  const victim = (await page.locator('.match .nameBtn').first().textContent())!.trim();
-  await page.locator('.match').first().getByRole('button', { name: 'Player ' + victim + ' options' }).click();
-  const sh = page.getByRole('dialog'); await sh.getByText('From the next round on').click();
-  await expect(sh.getByText('player short')).toHaveCount(0);
-  await sh.getByRole('button', { name: 'Drop ' + victim }).click();
-  await expect(page.locator('.match').first()).toContainText(victim); // finishes current round
-  for (let i = 0; i < 3; i++) { await page.getByLabel('Next round').click(); await expect(page.getByRole('heading', { name: 'Round ' + (i + 2) + ' of 4' })).toBeVisible(); await expect.poll(() => roundNames(page)).not.toContain(victim); await expect(page.locator('.card.bye')).toHaveCount(0); }
-});
-
 test('landing, Join list + empty state (mocked), time wheel', async ({ page }) => {
   await page.goto(BASE);
   await expect(page.locator('.landBtns button')).toHaveCount(2); await expect(page.getByRole('heading', { name: 'Stone Creek Pickleball' })).toBeVisible(); await expect(page).toHaveTitle('Stone Creek Pickleball');
@@ -256,7 +212,7 @@ test('landing, Join list + empty state (mocked), time wheel', async ({ page }) =
   await page.screenshot({ path: 'e2e/shot-time-wheel.png' });
 });
 
-test('sign-up lobby → start with 10 → late join → last round → stats', async ({ page, browser }) => {
+test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster locked → stats', async ({ page, browser }) => {
   test.setTimeout(180000);
   const tag = Math.random().toString(36).slice(2, 6);
   await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Lobby ' + tag); await page.getByLabel('Place').fill('Stone Creek');
@@ -269,14 +225,21 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p2 = await ctx.newPage();
   await p2.goto(BASE + '#/join'); await p2.getByLabel('Have a code or link?').fill(code); await p2.getByRole('button', { name: 'Join', exact: true }).click();
   await expect(p2.getByText('Add yourself to this game')).toBeVisible();
-  const names = Array.from({ length: 10 }, (_, i) => `${['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo'][i]}-${tag}`);
-  for (const n of names) { await p2.getByLabel('Player name').fill(n); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); if (n !== names[9]) { await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible(); } }
-  await expect(p2.getByText('10 joined')).toBeVisible();
+  const names = Array.from({ length: 12 }, (_, i) => `${['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'][i]}-${tag}`);
+  const join = async (n: string, last: boolean) => { await p2.getByLabel('Player name').fill(n); await p2.getByRole('button', { name: 'Join', exact: true }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); if (!last) { await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible(); } };
+  for (const n of names.slice(0, 10)) await join(n, n === names[9]);
+  // 10 players: Start is disabled with a clear message; the API refuses a start too
+  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need 4, 8, 12 or 16 players to start (have 10)')).toBeVisible();
+  await p2.screenshot({ path: 'e2e/shot-start-blocked.png' });
+  { const cur0 = (await (await p2.request.get(API + '/e/' + code)).json()).data; const r = await p2.request.put(API + '/e/' + code, { data: { data: { ...cur0, hidden: true, rounds: [{ n: 1, matches: [], byes: [] }] } } }); expect(r.status()).toBe(409); expect((await r.json()).error).toBe('need multiple of 4'); }
+  await p2.evaluate(c => localStorage.removeItem('pb:me:' + c), code); await p2.reload(); await expect(p2.getByText('Add yourself to this game')).toBeVisible();
+  for (const n of names.slice(10)) await join(n, n === names[11]);
+  await expect(p2.getByText('12 joined')).toBeVisible();
   await p2.screenshot({ path: 'e2e/shot-lobby.png' });
   // a joined player (not the organizer) starts it, with a confirm step
   await p2.getByRole('button', { name: 'Start game', exact: true }).click();
-  await expect(p2.getByRole('alertdialog')).toContainText('Start with 10 players?'); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
-  await expect(p2.getByText('Hi, ' + names[9])).toBeVisible();
+  await expect(p2.getByRole('alertdialog')).toContainText('Start with 12 players?'); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(p2.getByText('Hi, ' + names[11])).toBeVisible();
   await page.getByLabel('Refresh').click(); await expect(page.getByRole('heading', { name: 'Round 1 of 2' })).toBeVisible();
   await expect(page.locator('.match')).toHaveCount(2); await expect(page.locator('.byeNames')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-brand-round.png' });
@@ -298,28 +261,42 @@ test('sign-up lobby → start with 10 → late join → last round → stats', a
   const after = (await (await p3.request.get(API + '/e/' + code)).json()).data; expect(JSON.stringify(after.rounds[0])).toBe(JSON.stringify(cur.rounds[0])); expect(after.courts).toBe(cur.courts);
   // an existing player can still tap their name and get back in
   await p3.getByRole('button', { name: names[0], exact: true }).click(); await expect(p3.getByText('Hi, ' + names[0])).toBeVisible();
-  // organizer can still add a late player from Manage
-  await page.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByLabel('Player name').fill('Late-' + tag); await page.getByRole('button', { name: 'Add late player' }).click();
-  await expect(page.getByText('Late-' + tag).first()).toBeVisible(); await page.waitForTimeout(1500);
-  expect(JSON.stringify((await (await p3.request.get(API + '/e/' + code)).json()).data.players)).toContain('Late-' + tag);
-  // setup is locked in Manage: no courts stepper / re-draw / DUPR toggle, short note instead; drop + end early remain
-  await expect(page.getByText('Locked: game started')).toBeVisible(); await expect(page.getByRole('button', { name: /Re-draw/ })).toHaveCount(0); await expect(page.getByText('Balance by DUPR')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Drop player/ })).toBeVisible(); await expect(page.getByRole('button', { name: /End early/ })).toBeVisible();
-  await page.getByText('Locked: game started').scrollIntoViewIfNeeded(); await page.screenshot({ path: 'e2e/shot-locked-settings.png' });
+  // roster locked: API refuses dropping a player, even from the creator; only the host (who tapped Start) can end or change rounds
+  const hostId = cur.startedBy; expect(hostId).toBe(cur.players.find((p: { name: string }) => p.name === names[11]).id);
+  await p2.evaluate(([c, id]) => localStorage.setItem('pb:me:' + c, id), [code, hostId]); // p3 shares this phone's storage; p2 is the host again
+  const drop = await p3.request.put(API + '/e/' + code + '?by=organizer', { data: { data: { ...cur, active: cur.active.slice(1) } } }); expect(drop.status()).toBe(409);
+  const endNon = await p3.request.put(API + '/e/' + code + '?by=' + cur.players[0].id, { data: { data: { ...cur, finished: true } } }); expect(endNon.status()).toBe(409); expect((await endNon.json()).error).toBe('host only');
+  const moreNon = await p3.request.put(API + '/e/' + code + '?by=organizer', { data: { data: { ...cur, totalRounds: cur.totalRounds + 1 } } }); expect(moreNon.status()).toBe(409);
+  // creator's phone (not the host): settings + roster locked, no End / add rounds; host note instead
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
+  await expect(page.getByText('Locked: game started')).toBeVisible(); await expect(page.getByText('Roster locked')).toBeVisible(); await expect(page.getByRole('button', { name: /Re-draw/ })).toHaveCount(0); await expect(page.getByText('Balance by DUPR')).toHaveCount(0);
+  await expect(page.getByText('Add late player')).toHaveCount(0); await expect(page.getByRole('button', { name: /Drop/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /End early/ })).toHaveCount(0); await expect(page.getByText('only ' + names[11] + ' (who started the game) can end it')).toBeVisible();
+  await page.getByText('Locked: game started').scrollIntoViewIfNeeded(); await page.screenshot({ path: 'e2e/shot-locked-settings.png' }); await page.screenshot({ path: 'e2e/shot-nonhost-manage.png', fullPage: true });
+  // host's phone: End early + total rounds available
+  await p2.getByRole('button', { name: 'Manage', exact: true }).click(); await expect(p2.getByRole('button', { name: /End early/ })).toBeVisible(); await expect(p2.getByText('Roster locked')).toBeVisible();
+  await p2.screenshot({ path: 'e2e/shot-host-manage.png', fullPage: true });
   await page.getByRole('button', { name: 'Courts', exact: true }).click();
   // score round 1, advance, score round 2 → last-round options
   await page.getByLabel('Refresh').click();
   const scoreAll = async () => { const n = await page.locator('.match').count(); for (let c = 0; c < n; c++) { const card = page.locator('.match').nth(c); await card.getByLabel('Team A score').fill('11'); await card.getByLabel('Team B score').fill(String(4 + c)); await card.getByText('Save score').click(); await expect(card.locator('.final')).toBeVisible(); } };
   await scoreAll(); await page.getByRole('button', { name: 'Next: Round 2 →' }).click(); await expect(page.getByRole('heading', { name: 'Round 2 of 2' })).toBeVisible();
   await scoreAll(); await expect(page.getByText("That's the last round.")).toBeVisible();
-  await page.screenshot({ path: 'e2e/shot-last-round.png' });
-  await page.getByRole('button', { name: '+1 round' }).click(); await expect(page.getByRole('button', { name: 'Next: Round 3 →' })).toBeVisible();
+  // non-host: no End now / +rounds
+  await expect(page.getByRole('button', { name: 'End now' })).toHaveCount(0); await expect(page.getByRole('button', { name: '+1 round' })).toHaveCount(0);
+  await expect(page.getByText('Only ' + names[11] + ' (who started the game) can end it or add rounds.')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-nonhost-last-round.png' });
+  // host: End now / +1 round
+  await page.waitForTimeout(1000); await p2.getByRole('button', { name: 'Courts', exact: true }).click(); await p2.getByLabel('Refresh').click();
+  await expect(p2.getByRole('button', { name: 'End now' })).toBeVisible(); await p2.screenshot({ path: 'e2e/shot-host-last-round.png' }); await p2.screenshot({ path: 'e2e/shot-last-round.png' });
+  await p2.getByRole('button', { name: '+1 round' }).click(); await expect(p2.getByRole('button', { name: 'Next: Round 3 →' })).toBeVisible();
+  await page.waitForTimeout(1000); await page.getByLabel('Refresh').click(); await expect(page.getByRole('button', { name: 'Next: Round 3 →' })).toBeVisible();
   // edit a score (stats must update, not duplicate)
-  const c0 = page.locator('.match').first(); const winner = (await c0.locator('.side').first().locator('.nameBtn').first().textContent())!.trim();
+  const c0 = page.locator('.match').first(); const winner = (await c0.locator('.side').first().locator('.names > div').first().textContent())!.trim();
   await c0.getByText('Edit score').click(); await c0.getByLabel('Team A score').fill('11'); await c0.getByLabel('Team B score').fill('9'); await c0.getByText('Save score').click(); await expect(c0.locator('.final')).toBeVisible();
-  // End early from Manage
-  await page.getByRole('button', { name: 'Manage', exact: true }).click(); page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'End early' }).click();
-  await page.locator('.tabs button').first().click(); await expect(page.getByText('Event finished')).toBeVisible();
+  // host ends early from Manage
+  await page.waitForTimeout(1000); await p2.getByRole('button', { name: 'Manage', exact: true }).click(); p2.once('dialog', d => d.accept()); await p2.getByRole('button', { name: 'End early' }).click();
+  await page.waitForTimeout(1500); await page.getByLabel('Refresh').click(); await expect(page.getByText('Event finished')).toBeVisible();
   await page.getByRole('button', { name: 'Standings', exact: true }).click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(4).textContent())!.trim();
   // all-time stats
   await page.goto(BASE + '#/stats'); const row = page.locator('tr', { hasText: winner });
@@ -343,17 +320,17 @@ test('long names show fully; no M/F anywhere; DUPR optional', async ({ page }) =
   expect(await input.evaluate(el => (el as HTMLInputElement).scrollWidth <= (el as HTMLInputElement).clientWidth + 1)).toBe(true);
   await page.screenshot({ path: 'e2e/shot-create-players.png' });
   await page.getByText('Add new player').click(); // no DUPR → still added
-  for (const n of ['Bo', 'Cy', 'Di', 'Ed']) { await page.getByLabel('Player name').fill(n); await page.getByLabel('DUPR (optional)').fill('3.5'); await page.getByText('Add new player').click(); }
+  for (const n of ['Bo', 'Cy', 'Di', 'Ed', 'Fy', 'Gi', 'Hu']) { await page.getByLabel('Player name').fill(n); await page.getByLabel('DUPR (optional)').fill('3.5'); await page.getByText('Add new player').click(); }
   await expect(page.getByRole('button', { name: long })).toBeVisible();
   await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel('Balance matchups by DUPR').check();
   await page.getByRole('button', { name: 'Create game' }).click();
-  await expect(page.getByText('5 joined')).toBeVisible();
+  await expect(page.getByText('8 joined')).toBeVisible();
   const chip = page.locator('.chip.static', { hasText: long }); await expect(chip).toHaveText(long);
   expect(await chip.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await expect(page.getByLabel('Player name')).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-lobby-names.png', fullPage: true });
   await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
-  await expect(page.locator('.match')).toHaveCount(1);
+  await expect(page.locator('.match')).toHaveCount(2);
   const all = page.locator('.match .names div, .byeNames'); await expect(page.locator('.match, .card.bye').filter({ hasText: long })).toHaveCount(1);
   for (const el of await all.all()) expect(await el.evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: 'e2e/shot-longname-card.png' });
@@ -416,8 +393,9 @@ test('Share game: short /g/CODE link, native share, copy-link fallback, deep lin
   await p3.evaluate(c => { localStorage.removeItem('pb:me:' + c); localStorage.removeItem('pb:org:' + c); }, code); await p3.reload();
   await expect(p3.getByText('Already joined? Tap your name')).toBeVisible(); await p3.getByRole('button', { name: 'Sharer', exact: true }).click(); await expect(p3.getByText("You're in as")).toBeVisible();
   await p3.close();
-  await p2.getByRole('button', { name: 'Start game', exact: true }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
-  await p2.getByRole('button', { name: 'Share game' }).first().click();
+  // 1 player: Start is disabled (needs 4, 8, 12 or 16)
+  await expect(p2.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled(); await expect(p2.getByText('Need 4, 8, 12 or 16 players to start (have 1)')).toBeVisible();
+  await p2.locator('.shareBig').click();
   await expect(p2.getByRole('dialog', { name: 'Share game' }).getByTestId('share-link')).toHaveText(expected);
 });
 test('typed-only scores: empty "–", number pad, auto-advance, any score (15–13, 12–10), ties blocked, stats exact', async ({ page }) => {
@@ -439,10 +417,26 @@ test('typed-only scores: empty "–", number pad, auto-advance, any score (15–
   await expect(c2.locator('.pts').first()).toHaveText('10'); await expect(c2.locator('.pts').nth(1)).toHaveText('12');
   await expect(c2.locator('.side').nth(1)).toHaveClass(/win/);
   // standings: point differential exactly as typed
-  const winA = (await c1.locator('.side').first().locator('.nameBtn').first().textContent())!.trim();
+  const winA = (await c1.locator('.side').first().locator('.names > div').first().textContent())!.trim();
   await page.getByRole('button', { name: 'Standings', exact: true }).click();
   const row = page.locator('tbody tr', { hasText: winA }); await expect(row.locator('td').nth(5)).toHaveText('15'); await expect(row.locator('td').nth(6)).toHaveText('13'); await expect(row.locator('td').nth(7)).toHaveText('+2');
-  // all-time stats log the exact score
-  await page.waitForTimeout(1500); await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
+  await expect(page.getByText('Live · updates as scores are entered')).toBeVisible(); await page.screenshot({ path: 'e2e/shot-match-standings.png' });
+  // in progress: not in Overall stats yet
+  await page.waitForTimeout(1500); const code = page.url().split('/e/')[1];
+  const pre = await (await page.request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(winA.toLowerCase()))).json(); expect(pre.matches.filter((m: { code: string }) => m.code === code)).toEqual([]);
+  // host ends it → read-only, listed in Past matches, counted in Overall stats
+  await page.getByRole('button', { name: 'Manage', exact: true }).click(); page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'End early' }).click();
+  await page.locator('.tabs button').first().click(); await expect(page.getByText('Match complete · scores are final (read-only)')).toBeVisible();
+  await expect(page.getByText('Edit score')).toHaveCount(0); await expect(page.locator('.scorebox')).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/shot-completed-readonly.png' });
+  await expect.poll(async () => (await (await page.request.get(API + '/e/' + code)).json()).data.finished).toBe(true);
+  const cur = (await (await page.request.get(API + '/e/' + code)).json()).data;
+  const edit = await page.request.put(API + '/e/' + code + '?by=organizer', { data: { data: { ...cur, finished: true, rounds: cur.rounds.map((r: { matches: { sa?: number }[] }) => ({ ...r, matches: r.matches.map(m => ({ ...m, sa: 99 })) })) } } }); expect(edit.status()).toBe(409); expect((await edit.json()).error).toBe('finished');
+  await page.goto(BASE); await page.getByRole('button', { name: /Past matches/ }).click(); await expect(page.getByRole('heading', { name: 'Past matches' })).toBeVisible();
+  await page.locator('.game').first().waitFor(); await page.screenshot({ path: 'e2e/shot-past-matches.png' });
+  await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.getByText('Final standings · match complete')).toBeVisible();
+  await page.goto(BASE); await page.getByRole('button', { name: /Overall stats/ }).click(); await expect(page.getByRole('heading', { name: 'Overall stats' })).toBeVisible(); await expect(page.locator('th', { hasText: 'Win%' })).toBeVisible();
+  await page.locator('tr', { hasText: winA }).first().waitFor(); await page.screenshot({ path: 'e2e/shot-overall-stats.png' });
+  await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
   await expect(page.locator('.hist').first()).toContainText('15–13');
 });

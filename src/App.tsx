@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, dropImpact, dropPlayer, readdPlayer, startEvent, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -52,6 +52,7 @@ export default function App() {
   if (r[0] === 'new') return <NewEvent />;
   if (r[0] === 'roster') return <Roster />;
   if (r[0] === 'join') return <Join />;
+  if (r[0] === 'past') return <Past />;
   if (r[0] === 'stats') return <Stats name={r[1] ? decodeURIComponent(r[1]) : undefined} />;
   if (r[0] === 'e' && r[1]) return <EventView code={r[1].toUpperCase()} joining={r[2] === 'join'} />;
   return <Home />;
@@ -68,7 +69,19 @@ function Home() {
       <button className="big primary huge" onClick={() => go('new')}>Create a game</button>
       <button className="big huge secondary" onClick={() => go('join')}>Join a game</button>
     </div>
-    <button className="ghost statsLink" onClick={() => go('stats')}><Icon n="stats" /> All-time stats</button>
+    <div className="row landLinks"><button className="ghost statsLink" onClick={() => go('stats')}><Icon n="stats" /> Overall stats</button>
+      <button className="ghost statsLink pastLink" onClick={() => go('past')}><Icon n="list" /> Past matches</button></div>
+  </div>;
+}
+
+/** Completed matches, newest first; each opens read-only with its final standings. */
+function Past() {
+  const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
+  useEffect(() => { S.listPast().then(setList).catch(() => setErr(true)); }, []);
+  return <div className="page"><Header title="Past matches" back="" />
+    {err && <p className="warn">Couldn't load past matches (offline?).</p>}{!list && !err && <p className="muted">Loading…</p>}
+    {list?.length === 0 && <div className="card empty"><b>No completed matches yet</b><p className="muted">A match shows here once its host ends it.</p></div>}
+    {list?.map(g => <GameCard key={g.code} g={{ ...g, rounds: 0 }} onClick={() => { S.setTab(g.code, 'standings'); go('e/' + g.code); }} />)}
   </div>;
 }
 
@@ -203,7 +216,7 @@ function NewEvent() {
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 3 && <>
       <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} />
-      <p className="muted small">Any number of players works: courts fill 4 at a time and everyone else sits out in fair rotation.</p>
+      <p className="muted small">Games start with 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras rotate in fairly.</p>
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
@@ -220,7 +233,7 @@ type Tab = 'courts' | 'me' | 'schedule' | 'standings' | 'manage';
 function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const [ev, setEv] = useState<EventT | null>(S.localEvent(code));
   const [online, setOnline] = useState(true); const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>(joining || S.getMe(code) ? 'me' : 'courts');
+  const [tab, setTab] = useState<Tab>((S.takeTab(code) as Tab) || (joining || S.getMe(code) ? 'me' : 'courts'));
   const [stamp, setStamp] = useState<Date | null>(null); const [sharing, setSharing] = useState(false); const [watching, setWatching] = useState(false);
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
@@ -233,14 +246,14 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
   const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId);
-  if (!member && !S.isOrg(code) && !watching) return <Started ev={ev} code={code} onPick={id => { S.setMe(code, id); setTab('me'); setWatching(true); }} />;
+  if (!member && !S.isOrg(code) && !watching && !ev.finished) return <Started ev={ev} code={code} onPick={id => { S.setMe(code, id); setTab('me'); setWatching(true); }} />;
   return <div className="page withtabs">
     <header><button className="ghost" onClick={() => go('')}>‹</button><Logo size={34} /><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
       <button className="ghost hdrShare" onClick={() => shareGame(ev, code, () => setSharing(true))} aria-label="Share game"><ShareIcon /></button>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <div className={'status ' + (online ? '' : 'off')}>{online ? (stamp ? 'Updated ' + stamp.toLocaleTimeString([], { timeStyle: 'short' }) + ' · pull down or tap refresh' : '') : 'Offline — changes saved on this phone, will upload when back online'}</div>
-    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} />}
+    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} host={isHost(ev, code)} />}
     {tab === 'me' && <Me ev={ev} code={code} nm={nm} act={act} />}
     {tab === 'schedule' && <Schedule ev={ev} nm={nm} act={act} />}
     {tab === 'standings' && <Standings ev={ev} />}
@@ -260,6 +273,9 @@ function usePullToRefresh(fn: () => void) {
 }
 
 type Act = (fn: (e: EventT) => void) => Promise<void>;
+/** The player who tapped Start is the host: only they can end the game or add rounds. Older games without a starter fall back to the creator's phone. */
+export function isHost(ev: EventT, code: string) { const me = S.getMe(code); if (!ev.startedBy) return S.isOrg(code); if (ev.startedBy === 'organizer') return S.isOrg(code); return !!me && me === ev.startedBy; }
+const hostName = (ev: EventT) => ev.players.find(p => p.id === ev.startedBy)?.name || 'the host';
 function currentRound(ev: EventT) { return ev.rounds[ev.rounds.length - 1]; }
 function roundLabel(ev: EventT, idx: number) { const r = ev.rounds[idx]; if (!r.playoff) return 'Round ' + r.n; const po = ev.rounds.filter(x => x.playoff); const left = po[po.indexOf(r)].matches.length; return left === 1 ? 'Final' : left === 2 ? 'Semifinals' : 'Quarterfinals'; }
 
@@ -273,16 +289,20 @@ function allViews(ev: EventT): View[] {
   return v;
 }
 
-function Courts({ ev, act, nm, me }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string }) {
+function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string; host: boolean }) {
   const views = allViews(ev); const curIdx = ev.rounds.length - 1;
   const [sel, setSel] = useState(curIdx);
   const lastCur = useRef(curIdx);
   useEffect(() => { if (lastCur.current !== curIdx) { lastCur.current = curIdx; setSel(curIdx); } }, [curIdx]);
   const vi = Math.min(Math.max(0, sel), views.length - 1); const v = views[vi];
-  const [ask, setAsk] = useState(false); const [dropping, setDropping] = useState<string | null>(null);
+  const [ask, setAsk] = useState(false);
   const r = currentRound(ev); const regular = ev.rounds.filter(x => !x.playoff).length; const isPO = !!r.playoff;
   const missing = unscoredCourts(r); const done = missing.length === 0;
-  const advance = () => act(e => { if (isPO || e.rounds.filter(x => !x.playoff).length >= e.totalRounds) { delete e.plan; const p = nextPlayoffRound(e); if (p) e.rounds.push(p); else e.finished = true; } else takeNextRound(e); });
+  const advanceFn = (e: EventT) => { if (isPO || e.rounds.filter(x => !x.playoff).length >= e.totalRounds) { delete e.plan; const p = nextPlayoffRound(e); if (p) e.rounds.push(p); else e.finished = true; } else takeNextRound(e); };
+  const advance = () => act(advanceFn);
+  // Would this advance end the game? Only the host can do that.
+  const willFinish = (() => { const c: EventT = JSON.parse(JSON.stringify(ev)); try { advanceFn(c); } catch { return false; } return !!c.finished; })();
+  const canAdvance = host || !willFinish;
   const champion = ev.finished && isPO && r.matches.length === 1 && scored(r.matches[0]) ? (r.matches[0].sa! > r.matches[0].sb! ? r.matches[0].a : r.matches[0].b) : null;
   const tx = useRef<number | null>(null);
   const go2 = (d: number) => setSel(Math.min(Math.max(0, vi + d), views.length - 1));
@@ -298,17 +318,20 @@ function Courts({ ev, act, nm, me }: { ev: EventT; act: Act; nm: (id: string) =>
       <button className="arrow" aria-label="Next round" disabled={vi >= views.length - 1} onClick={() => go2(1)}>›</button></div>
     {vi === curIdx && champion && <div className="card champ"><Icon n="trophy" /> Champions: {champion.map(nm).join(' & ')}</div>}
     {vi === curIdx && ev.finished && !champion && <div className="card champ"><Icon n="flag" /> Event finished — see Standings</div>}
+    {ev.finished && <div className="lockNote readOnly" role="note"><Icon n="lock" size={18} /> Match complete · scores are final (read-only)</div>}
     {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
       {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.</p>}
-      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} onName={!ev.finished && (v.kind !== 'played' || v.idx === curIdx) ? setDropping : undefined} onScore={v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
+      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
       {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(nm).join(' · ')}</div></div>}</>}
-    {vi === curIdx && !ev.finished && !(lastReg) && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
-    {vi === curIdx && !ev.finished && lastReg && <div className="card lastRound"><b>That's the last round.</b>
+    {vi === curIdx && !ev.finished && !(lastReg) && canAdvance && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
+    {vi === curIdx && !ev.finished && !canAdvance && !lastReg && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> Only {hostName(ev)} (who started the game) can finish it.</div>}
+    {vi === curIdx && !ev.finished && lastReg && !host && <div className="card lastRound hostOnly"><b>That's the last round.</b><div className="muted small">Only {hostName(ev)} (who started the game) can end it or add rounds.</div>
+      {canAdvance && <button className="big" onClick={() => missing.length ? setAsk(true) : advance()}>Start playoffs ›</button>}</div>}
+    {vi === curIdx && !ev.finished && lastReg && host && <div className="card lastRound"><b>That's the last round.</b>
       <button className="big primary" onClick={() => act(e => endEvent(e))}><Icon n="flag" /> End now</button>
       <div className="row addR"><button onClick={() => act(e => addRounds(e, 1))}>+1 round</button><button onClick={() => act(e => addRounds(e, 3))}>+3 rounds</button><button onClick={() => { const n = Number(prompt('How many more rounds?', '2')); if (n > 0) act(e => addRounds(e, n)); }}>Custom…</button></div>
       <button className="big" onClick={() => missing.length ? setAsk(true) : advance()}>Start playoffs ›</button></div>}
     {vi !== curIdx && <button className="big" onClick={() => setSel(curIdx)}>Back to current round</button>}
-    {dropping && <DropSheet ev={ev} act={act} nm={nm} pid={dropping} onClose={() => setDropping(null)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="unsc-t" onClick={e => e.stopPropagation()}>
       <h2 id="unsc-t"><Icon n="alert" size={22} /> {missing.length === 1 ? '1 court has' : missing.length + ' courts have'} no score</h2>
       <p>Court {missing.join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
@@ -343,10 +366,11 @@ function ScoreBox({ v, set, label = 'Score', onDone, last }: { v: number | ''; s
     onChange={e => { const d = e.target.value.replace(/\D/g, '').slice(0, 2); set(d === '' ? '' : Number(d)); if (d.length === 2 && !last) advance(e.target); }} /></div>;
 }
 
-function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) => string; act: Act }) {
+function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => string; act?: Act }) {
   const [me, setMeS] = useState(S.getMe(code));
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
-  if (!me || !ev.players.some(p => p.id === me)) return <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />;
+  if (!me || !ev.players.some(p => p.id === me)) return <div className="card"><h3 className="small muted">The game started — new players can't be added. Already playing? Tap your name</h3>
+    <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip" onClick={() => pick(p.id)}>{p.name}</button>)}</div></div>;
   const mine = ev.rounds.map((r, i) => ({ r, i, m: r.matches.find(m => m.a.includes(me) || m.b.includes(me)), bye: r.byes.includes(me) }));
   const cur = mine[mine.length - 1];
   const st = standings(ev); const rank = st.findIndex(s => s.id === me);
@@ -370,7 +394,7 @@ function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) 
 
 function Schedule({ ev, nm, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
   return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} onScore={(a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
     {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(nm).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
@@ -379,6 +403,7 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
   const st = standings(ev);
   const teams = unitSize(ev.format) > 1;
   return <div>
+    <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
     {ev.finished && st[0] && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {teams && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
@@ -392,71 +417,37 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
   const [sharing, setSharing] = useState(false);
   const download = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([toCSV(ev)], { type: 'text/csv' })); a.download = ev.name.replace(/\W+/g, '_') + '.csv'; a.click(); };
   const unit = unitSize(ev.format);
-  const [dropping, setDropping] = useState<string | null>(null);
+  const host = isHost(ev, code);
   return <div>
     <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
-    {!ev.finished && <button className="big dropBig" onClick={() => setDropping('')}><Icon n="userMinus" /> Drop player (injured / left)</button>}
-    {dropping !== null && <DropSheet ev={ev} act={act} nm={id => ev.players.find(p => p.id === id)?.name || '?'} pid={dropping || undefined} onClose={() => setDropping(null)} />}
     <h2>Players ({ev.active.length} playing)</h2>
-    {unit === 1 ? <PlayerForm label="Add late player" onAdd={p => { S.addToRoster(p); act(e => { e.players.push(p); e.active.push(p.id); }); }} />
-      : <AddTeam unit={unit} act={act} />}
-    {ev.players.map(p => { const on = ev.active.includes(p.id); return <div key={p.id} className="card row between"><span className={on ? '' : 'muted'}><b>{p.name}</b> {p.dupr ? 'DUPR ' + p.dupr : ''}{on ? '' : <span className="wd">withdrawn</span>}</span>
-      {on ? <button className="ghost danger small" onClick={() => setDropping(p.id)}>Drop</button> : <button className="ghost small readd" onClick={() => act(e => readdPlayer(e, p.id))}><Icon n="undo" size={16} /> Re-add</button>}</div>; })}
-    <p className="muted small">Dropped players keep their results (shown as withdrawn); unscored upcoming rounds are redrawn automatically. Re-added players return from the next round.</p>
+    <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked: no adding or removing players after the start</div>
+    <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div>
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
     <div className="card locked"><div className="muted small">Day &amp; time</div><div className="lockedVal">{fmtWhen(ev.date).day} {fmtWhen(ev.date).date} · {fmtWhen(ev.date).time}</div>
       <div className="muted small">Courts · Format</div><div className="lockedVal">{ev.courts} court{ev.courts === 1 ? '' : 's'} · {fmtName(ev.format)}{ev.balanceDupr ? ' · DUPR balanced' : ''}</div>
       {unit > 1 && <><div className="muted small">{unit === 2 ? 'Pairs' : 'Teams'}</div><div className="lockedVal">{ev.teams.filter(t => t.length === unit).map(t => t.map(id => ev.players.find(p => p.id === id)?.name || '?').join(' & ')).join(' · ')}</div></>}</div>
-    <label>Total rounds</label><Stepper value={ev.totalRounds} min={Math.max(1, ev.rounds.filter(r => !r.playoff).length)} max={60} onChange={n => act(e => { e.totalRounds = n; e.finished = false; })} />
-    {!ev.finished && <button className="big danger" onClick={() => confirm('End the event now? Standings are final; unplayed rounds are dropped.') && act(e => endEvent(e))}><Icon n="flag" /> End early</button>}
-    {ev.finished && <button className="big" onClick={() => act(e => addRounds(e, 1))}><Icon n="refresh" /> Reopen with +1 round</button>}
+    {host ? <><label>Total rounds</label><Stepper value={ev.totalRounds} min={Math.max(1, ev.rounds.filter(r => !r.playoff).length)} max={60} onChange={n => act(e => { e.totalRounds = n; e.finished = false; })} />
+      {!ev.finished && <button className="big danger" onClick={() => confirm('End the event now? Standings are final; unplayed rounds are dropped.') && act(e => endEvent(e))}><Icon n="flag" /> End early</button>}
+</>
+      : <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> {ev.totalRounds} rounds · only {hostName(ev)} (who started the game) can end it or add rounds.</div>}
     <button className="big" onClick={download}><Icon n="download" /> Export scores (CSV)</button>
-    <button className="big" onClick={() => { const code2 = S.newCode(); const copy: EventT = { ...JSON.parse(JSON.stringify(ev)), id: code2, rounds: [], finished: false, date: localISO(), createdAt: Date.now() }; delete copy.plan; copy.rounds.push(nextRound(copy)); ensurePlan(copy); S.saveLocal(code2, copy, true); S.pushRemote(code2, copy).then(() => S.saveLocal(code2, copy, false)).catch(() => {}); go('e/' + code2); }}><Icon n="copy" /> Duplicate as new event</button>
+    <button className="big" onClick={() => { const code2 = S.newCode(); const copy: EventT = { ...JSON.parse(JSON.stringify(ev)), id: code2, rounds: [], finished: false, date: localISO(), createdAt: Date.now() }; delete copy.plan; delete copy.planKey; delete copy.startedAt; delete copy.startedBy; delete copy.host; S.setOrg(code2); S.saveLocal(code2, copy, true); S.pushRemote(code2, copy).then(() => S.saveLocal(code2, copy, false)).catch(() => {}); go('e/' + code2); }}><Icon n="copy" /> Duplicate as new event</button>
     <button className="big danger" onClick={() => confirm('Remove from this phone? (Others with the link keep it.)') && (S.forget(code), go(''))}>Remove from my list</button>
   </div>;
-}
-
-function AddTeam({ unit, act }: { unit: number; act: Act }) {
-  const [names, setNames] = useState<string[]>(Array(unit).fill(''));
-  return <div className="card"><b>Add a {unit === 2 ? 'pair' : 'team of 4'}</b>{names.map((n, i) => <input key={i} placeholder={'Player ' + (i + 1)} value={n} onChange={e => { const c = [...names]; c[i] = e.target.value; setNames(c); }} />)}
-    <button className="primary full" disabled={names.some(n => !n.trim())} onClick={() => { const ps = names.map(n => ({ id: S.uid(), name: n.trim() })); ps.forEach(S.addToRoster); act(e => { e.players.push(...ps); e.active.push(...ps.map(p => p.id)); e.teams.push(ps.map(p => p.id)); }); setNames(Array(unit).fill('')); }}>Add</button></div>;
-}
-
-function DropSheet({ ev, act, nm, pid: initial, onClose }: { ev: EventT; act: Act; nm: (id: string) => string; pid?: string; onClose: () => void }) {
-  const [pid, setPid] = useState(initial || ''); const [when, setWhen] = useState<'now' | 'next'>('now');
-  const [fix, setFix] = useState<'replace' | 'void'>('replace'); const [sub, setSub] = useState('');
-  const imp = pid ? dropImpact(ev, pid) : { match: null, subs: [] as string[] };
-  const cur = currentRound(ev); const curLbl = cur ? roundLabel(ev, ev.rounds.length - 1) : '';
-  const short = when === 'now' && imp.match; const canReplace = imp.subs.length > 0;
-  const effFix = canReplace ? fix : 'void'; const effSub = imp.subs.includes(sub) ? sub : imp.subs[0];
-  const active = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
-  return <div className="sheetBg" onClick={onClose}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="drop-t" onClick={e => e.stopPropagation()}>
-    <h2 id="drop-t"><Icon n="userMinus" size={22} /> Drop {pid ? nm(pid) : 'a player'}</h2>
-    {!pid ? <><p className="muted">Who is out?</p><div className="chips">{active.map(p => <button key={p.id} className="chip" onClick={() => setPid(p.id)}>{p.name}</button>)}</div></> : <>
-      <div role="radiogroup" aria-label="When">
-        <label className="opt"><input type="radio" name="when" checked={when === 'now'} onChange={() => setWhen('now')} /> <span><b>Out now</b><span className="muted small">Leaves {curLbl} immediately</span></span></label>
-        <label className="opt"><input type="radio" name="when" checked={when === 'next'} onChange={() => setWhen('next')} /> <span><b>From the next round on</b><span className="muted small">Finishes {curLbl}, then sits out the rest</span></span></label></div>
-      {short && <><p className="warn">Court {imp.match!.court} will be a player short.</p><div role="radiogroup" aria-label="Short court">
-        {canReplace && <label className="opt"><input type="radio" name="fix" checked={effFix === 'replace'} onChange={() => setFix('replace')} /> <span><b>Replace with a sit-out</b>
-          {effFix === 'replace' && <span className="chips">{imp.subs.map(p => <button key={p} className={'chip ' + (p === effSub ? 'on' : '')} onClick={() => setSub(p)}>{nm(p)}</button>)}</span>}</span></label>}
-        <label className="opt"><input type="radio" name="fix" checked={effFix === 'void'} onChange={() => setFix('void')} /> <span><b>Void Court {imp.match!.court}</b><span className="muted small">No result; the other 3 sit out this round</span></span></label></div></>}
-      <p className="muted small">Their results so far stay in the standings (marked withdrawn). Unscored upcoming rounds are redrawn with fair sit-outs. You can re-add them later in Manage.</p>
-      <button className="big dangerFill" onClick={() => { act(e => dropPlayer(e, pid, { when, fix: effFix, sub: effSub })); onClose(); }}>Drop {nm(pid)}</button></>}
-    <button className="big" onClick={onClose}>Cancel</button>
-  </div></div>;
 }
 
 function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; act: Act; refresh: () => void; loading: boolean }) {
   const [me, setMeS] = useState(S.getMe(code)); const [ask, setAsk] = useState(false); const [starting, setStarting] = useState(false);
   const start = () => { setAsk(false); if (starting) return; setStarting(true); const stamp = Date.now();
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
-    act(e => { if (e.rounds.length) return; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
+    act(e => { if (e.rounds.length || !startOk(e.active.length)) return; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
   const joined = ev.players.filter(p => ev.active.includes(p.id));
-  const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me));
+  const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me)); const ok = startOk(joined.length);
   const w = fmtWhen(ev.date); const link = gameLink(code);
   const [sharing, setSharing] = useState(false);
   return <div className="page">
@@ -464,7 +455,8 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts · {ev.totalRounds} rounds</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
-    {canStart && <button className="big primary huge" disabled={starting} onClick={() => setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
+    {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
+    {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
     {!me && <JoinForm ev={ev} onJoin={p => { act(e => { e.players.push(p); e.active.push(p.id); }); pick(p.id); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
@@ -475,8 +467,8 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
-      <p>Round 1 is drawn now from everyone who has joined{joined.length % 4 ? `; ${Math.max(0, joined.length - Math.min(ev.courts, Math.floor(joined.length / 4)) * 4)} sit out each round in fair rotation` : ''}. After the start, new players can't join from the link; the organizer can still add a late player in Manage.</p>
-      <button className="big primary" disabled={starting} onClick={start}>Start game</button>
+      <p>Round 1 is drawn now from everyone who has joined. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
+      <button className="big primary" disabled={starting || !ok} onClick={start}>Start game</button>
       <button className="big" onClick={() => setAsk(false)}>Keep waiting</button></div></div>}
   </div>;
 }
@@ -493,12 +485,12 @@ function Stats({ name }: { name?: string }) {
         return <div key={m.id} className="card hist"><div className={'res ' + (won ? 'w' : 'l')}>{won ? 'W' : 'L'}</div><div className="grow"><div className="small muted">{d.date} · {m.ev_name}</div>
           <div>with <b>{mine.filter(x => x.toLowerCase() !== k).join(' & ') || '—'}</b></div><div>vs <b>{opp.join(' & ')}</b></div></div><div className="hScore">{pf}–{pa}</div></div>; })}
     </div>; }
-  return <div className="page"><Header title="All-time stats" back="" />
+  return <div className="page"><Header title="Overall stats" back="" />
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
-    {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Stats build up automatically as scores are entered.</p></div>}
-    {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>+/-</th><th>Ev</th></tr></thead>
-      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn">{b.name}</button></td><td>{b.wins}</td><td>{b.losses}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td><td>{b.events}</td></tr>)}</tbody></table>}
-    <p className="muted small">Matched by name (not case-sensitive). Updates whenever a score is saved or edited.</p>
+    {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
+    {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
+      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn">{b.name}</button></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
+    <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
   </div>;
 }
 
@@ -540,7 +532,7 @@ function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: 
   const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
   return <div className="page"><Header title={ev.name} back="" />
     <div className="card startedCard"><h2>This game already started</h2>
-      <p className="muted">{ev.name} is underway ({code}), so new players can't join from the link. Ask the organizer if you need to be added.</p>
+      <p className="muted">{ev.name} is underway ({code}), so no one new can be added.</p>
       <button className="big primary" onClick={() => go('join')}>Find another game</button></div>
     {joined.length > 0 && <div className="card"><h3 className="small muted">Already playing? Tap your name</h3>
       <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></div>}

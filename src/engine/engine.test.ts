@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EventT, Format, nextRound, mulberry, history, standings, nextPlayoffRound, Player } from './engine';
+import { EventT, Format, nextRound, mulberry, history, standings, nextPlayoffRound, Player, startOk } from './engine';
 
 function mk(n: number, format: Format, courts = 99, extra: Partial<EventT> = {}): EventT {
   const players: Player[] = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i, dupr: 3 + (i % 10) / 10 }));
@@ -239,3 +239,5 @@ describe('scores are taken exactly as typed (no target / win-by-2)', () => {
     expect(unscoredCourts(ev.rounds[4])).toEqual([1]);
   });
 });
+
+describe('start rule', () => { it('needs a multiple of 4 players', () => { for (const n of [4, 8, 12, 16, 20]) expect(startOk(n)).toBe(true); for (const n of [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13]) expect(startOk(n)).toBe(false); }); });
