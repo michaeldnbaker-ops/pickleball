@@ -97,3 +97,13 @@ describe('mid-event changes & playoffs', () => {
     expect(nextPlayoffRound(ev)).toBeNull();
   });
 });
+
+import { unscoredCourts as uc } from './engine';
+import type { Match, Round } from './engine';
+describe('unscoredCourts (advance warning)', () => {
+  const R = (ms: Partial<Match>[]) => ({ n: 1, byes: [], matches: ms.map((m, i) => ({ court: i + 1, a: [], b: [], ...m })) }) as unknown as Round;
+  it('lists courts without scores', () => { expect(uc(R([{ sa: 11, sb: 5 }, {}, { sa: 3 }]))).toEqual([2, 3]); });
+  it('treats ties as unscored', () => { expect(uc(R([{ sa: 7, sb: 7 }]))).toEqual([1]); });
+  it('empty when all scored', () => { expect(uc(R([{ sa: 11, sb: 9 }, { sa: 2, sb: 11 }]))).toEqual([]); });
+  it('handles missing round', () => { expect(uc(undefined)).toEqual([]); });
+});

@@ -25,3 +25,32 @@ table{width:100%;border-collapse:collapse;font-size:.95rem}th,td{padding:9px 4px
 .tabs button{flex:1;border:none;border-radius:0;background:none;font-size:.8rem;min-height:64px;padding:4px 2px;color:var(--mut)}.tabs button.on{color:var(--pri);font-weight:700}
 .status{font-size:.78rem;color:var(--mut);margin:-4px 0 6px}.status.off{color:#fbbf24}
 details{margin:8px 0}summary{font-size:1.1rem;font-weight:700;padding:12px 0;cursor:pointer}
+/* ---- polish pass ---- */
+:root{--pri:#b8f02a;--priFg:#0b1400;--sp:12px}
+html,body{background:var(--bg);overscroll-behavior-y:contain}
+.page{max-width:none;width:100%;padding:calc(env(safe-area-inset-top) + var(--sp)) 16px 40px}
+@media(min-width:700px){.page{max-width:640px}}
+.withtabs{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);margin:0 -16px 8px;padding:8px 16px;border-bottom:1px solid var(--line)}
+label{color:#cbd5e1;font-weight:600;margin:16px 0 6px}
+.row.labels label{margin:0 0 4px;font-size:.8rem}
+.card{margin:var(--sp) 0}
+button.primary{background:var(--pri);color:var(--priFg);border:none;font-weight:800;box-shadow:0 2px 0 #6f9a0f}
+button.primary:active{transform:translateY(1px);box-shadow:none}
+button:disabled,button.primary:disabled{opacity:1;background:#334155;color:#cbd5e1;box-shadow:none;border:1px dashed #64748b}
+button.fmt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;font:inherit;color:var(--fg);min-height:0}
+.fmt .fmtText{display:flex;flex-direction:column;gap:3px}
+.fmt .radio{flex:none;width:26px;height:26px;border-radius:50%;border:2px solid #64748b;display:grid;place-items:center;font-weight:900;font-size:.95rem;color:var(--priFg)}
+.card.fmt.sel{border:2px solid var(--pri);background:#26360f;box-shadow:0 0 0 3px rgba(184,240,42,.18)}
+.fmt.sel .radio{background:var(--pri);border-color:var(--pri)}
+.fmt.sel b{color:var(--pri)}
+.scorebox{border:2px solid #94a3b8;background:#f8fafc}
+.scorebox button{background:#e2e8f0;color:#0f1720;font-weight:800}
+.scorebox input{background:#fff;color:#0f1720;border-left:1px solid #cbd5e1;border-right:1px solid #cbd5e1}
+.scorebox input:focus{outline:3px solid var(--pri);outline-offset:-3px}
+.entry{flex-wrap:wrap}.entry>button{min-width:90px}
+.tabs{z-index:10;background:rgba(11,18,26,.97);backdrop-filter:blur(8px)}
+.tabs button.on{background:rgba(184,240,42,.12);box-shadow:inset 0 3px 0 var(--pri)}
+.sheetBg{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:flex-end}
+.sheet{width:100%;background:var(--card);border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));border-top:2px solid #fbbf24}
+.sheet h2{margin-top:0;color:#fbbf24}

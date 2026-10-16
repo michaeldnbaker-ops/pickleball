@@ -205,6 +205,8 @@ export function nextPlayoffRound(ev: EventT): Round | null {
 }
 
 /** Regenerate the latest round if no scores have been entered (after roster/court change). */
+/** Courts in a round that have no valid (non-tied) score yet. */
+export function unscoredCourts(r: Round | undefined): number[] { return r ? r.matches.filter(m => !scored(m)).map(m => m.court) : []; }
 export function canRegenerate(ev: EventT) { const r = ev.rounds[ev.rounds.length - 1]; return !!r && !r.playoff && !r.matches.some(m => m.sa != null || m.sb != null); }
 
 export function toCSV(ev: EventT) {

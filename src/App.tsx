@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { EventT, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored } from './engine/engine';
+import { EventT, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, canRegenerate, toCSV, scored, unscoredCourts } from './engine/engine';
 import * as S from './store';
 
 const FORMATS: { id: Format; name: string; desc: string }[] = [
@@ -38,8 +38,8 @@ function Home() {
   return <div className="page">
     <Header title="🏓 Dink Day" />
     <button className="big primary" onClick={() => go('new')}>+ New Event</button>
-    <div className="card"><label>Join with event code</label>
-      <div className="row"><input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="e.g. K7Q2MD" maxLength={8} /><button className="primary" disabled={code.length < 4} onClick={() => go('e/' + code)}>Join</button></div></div>
+    <div className="card"><label htmlFor="join-code">Join with event code</label>
+      <div className="row"><input id="join-code" value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="e.g. K7Q2MD" maxLength={8} /><button className="primary" disabled={code.length < 4} onClick={() => go('e/' + code)}>Join</button></div></div>
     <button className="big" onClick={() => go('roster')}>👥 Player Roster ({S.getRoster().length})</button>
     {evs.length > 0 && <h2>Recent events</h2>}
     {evs.map(e => <div key={e.code} className="card tap" onClick={() => go('e/' + e.code)}><b>{e.name}</b><div className="muted">{e.date ? new Date(e.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''} · code {e.code}</div></div>)}
@@ -50,10 +50,11 @@ function Home() {
 function PlayerForm({ onAdd, label = 'Add' }: { onAdd: (p: Player) => void; label?: string }) {
   const [name, setName] = useState(''); const [dupr, setDupr] = useState(''); const [g, setG] = useState<'' | 'M' | 'F'>('');
   const submit = () => { if (!name.trim()) return; onAdd({ id: S.uid(), name: name.trim(), dupr: dupr ? Number(dupr) : undefined, gender: g || undefined }); setName(''); setDupr(''); setG(''); };
-  return <div className="card"><div className="row">
-    <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
-    <input className="narrow" placeholder="DUPR" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, ''))} />
-    <select className="narrow" value={g} onChange={e => setG(e.target.value as '')}><option value="">–</option><option value="M">M</option><option value="F">F</option></select>
+  const idp = useRef(S.uid()).current;
+  return <div className="card"><div className="row labels"><label htmlFor={idp + '-n'}>Player name</label><label htmlFor={idp + '-d'} className="narrow">DUPR</label><label htmlFor={idp + '-g'} className="narrow">M/F</label></div><div className="row">
+    <input id={idp + '-n'} placeholder="Name" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+    <input id={idp + '-d'} className="narrow" placeholder="DUPR" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, ''))} />
+    <select id={idp + '-g'} className="narrow" value={g} onChange={e => setG(e.target.value as '')}><option value="">–</option><option value="M">M</option><option value="F">F</option></select>
   </div><button className="primary full" onClick={submit}>{label}</button></div>;
 }
 
@@ -103,11 +104,11 @@ function NewEvent() {
   const maxCourts = Math.max(1, Math.floor(players.length / 4));
   return <div className="page"><Header title={`New Event · ${step}/3`} back="" />
     {step === 1 && <>
-      <label>Event name</label><input value={name} onChange={e => setName(e.target.value)} />
-      <label>Date & time</label><input type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
-      <label>Place</label><input value={place} placeholder="e.g. the gym" onChange={e => setPlace(e.target.value)} />
-      <label>Format</label>
-      {FORMATS.map(f => <div key={f.id} className={'card tap ' + (format === f.id ? 'sel' : '')} onClick={() => setFormat(f.id)}><b>{f.name}</b><div className="muted small">{f.desc}</div></div>)}
+      <label htmlFor="ev-name">Event name</label><input id="ev-name" value={name} onChange={e => setName(e.target.value)} />
+      <label htmlFor="ev-date">Date & time</label><input id="ev-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
+      <label htmlFor="ev-place">Place</label><input id="ev-place" value={place} placeholder="e.g. the gym" onChange={e => setPlace(e.target.value)} />
+      <label id="fmt-label">Format</label>
+      <div role="radiogroup" aria-labelledby="fmt-label">{FORMATS.map(f => <button type="button" role="radio" aria-checked={format === f.id} key={f.id} className={'card tap fmt ' + (format === f.id ? 'sel' : '')} onClick={() => setFormat(f.id)}><span className="radio" aria-hidden="true">{format === f.id ? '✓' : ''}</span><span className="fmtText"><b>{f.name}</b><span className="muted small">{f.desc}</span></span></button>)}</div>
       <button className="big primary" onClick={() => setStep(2)}>Next: Players ›</button></>}
     {step === 2 && <>
       <PlayerForm onAdd={p => { S.addToRoster(p); setPlayers([...players, p]); }} label="Add new player" />
@@ -176,6 +177,8 @@ function Courts({ ev, act, nm }: { ev: EventT; act: Act; nm: (id: string) => str
   const done = r.matches.every(scored);
   const isPO = !!r.playoff;
   const advance = () => act(e => { if (isPO || e.rounds.filter(x => !x.playoff).length >= e.totalRounds) { const p = nextPlayoffRound(e); if (p) e.rounds.push(p); else e.finished = true; } else e.rounds.push(nextRound(e)); });
+  const [ask, setAsk] = useState(false);
+  const missing = unscoredCourts(r);
   const champion = ev.finished && isPO && r.matches.length === 1 && scored(r.matches[0]) ? (r.matches[0].sa! > r.matches[0].sb! ? r.matches[0].a : r.matches[0].b) : null;
   if (!r) return null;
   return <div>
@@ -184,8 +187,13 @@ function Courts({ ev, act, nm }: { ev: EventT; act: Act; nm: (id: string) => str
     {ev.finished && !champion && <div className="card champ">🏁 Event finished — see Standings</div>}
     {r.matches.map((m, i) => <MatchCard key={idx + '-' + i} m={m} nm={nm} onScore={(a, b) => act(e => { const mm = e.rounds[idx].matches[i]; mm.sa = a; mm.sb = b; })} />)}
     {r.byes.length > 0 && <div className="card bye">Sitting out: <b>{r.byes.map(nm).join(', ')}</b></div>}
-    {!ev.finished && <button className={'big ' + (done ? 'primary' : '')} onClick={() => (done || confirm('Some courts have no score yet. Advance anyway?')) && advance()}>
+    {!ev.finished && <button className={'big ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>
       {isPO ? (r.matches.length === 1 ? 'Finish event' : 'Next playoff round ›') : regular >= ev.totalRounds ? 'Start playoffs / finish ›' : `Next: Round ${regular + 1} ›`}</button>}
+    {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="unsc-t" onClick={e => e.stopPropagation()}>
+      <h2 id="unsc-t">⚠️ {missing.length === 1 ? '1 court has' : missing.length + ' courts have'} no score</h2>
+      <p>Court {missing.join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
+      <button className="big primary" onClick={() => setAsk(false)}>Go back and enter scores</button>
+      <button className="big danger" onClick={() => { setAsk(false); advance(); }}>Continue anyway</button></div></div>}
     {!ev.finished && !isPO && regular >= ev.totalRounds && <button className="big" onClick={() => act(e => { e.finished = true; })}>Finish without playoffs</button>}
   </div>;
 }
@@ -206,7 +214,7 @@ function MatchCard({ m, nm, onScore, me }: { m: Match; nm: (id: string) => strin
   </div>;
 }
 function ScoreBox({ v, set }: { v: number | ''; set: (n: number | '') => void }) {
-  return <div className="scorebox"><button onClick={() => set(Math.max(0, (v || 0) - 1))}>−</button><input inputMode="numeric" value={v} onChange={e => set(e.target.value === '' ? '' : Math.min(99, Number(e.target.value.replace(/\D/g, ''))))} /><button onClick={() => set((v || 0) + 1)}>+</button></div>;
+  return <div className="scorebox"><button aria-label="minus" onClick={() => set(Math.max(0, (v || 0) - 1))}>−</button><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label="Score" placeholder="0" onFocus={e => e.target.select()} value={v} onChange={e => set(e.target.value === '' ? '' : Math.min(99, Number(e.target.value.replace(/\D/g, ''))))} /><button aria-label="plus" onClick={() => set(Math.min(99, (v || 0) + 1))}>+</button></div>;
 }
 
 function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) => string; act: Act }) {

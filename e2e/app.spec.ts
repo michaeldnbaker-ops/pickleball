@@ -50,9 +50,42 @@ test('KOTC and playoffs reach a champion', async ({ page }) => {
   await page.getByRole('button', { name: 'Next ›' }).click();
   for (let i = 0; i < 7; i++) await page.locator('.stepper').nth(1).getByText('−').click();
   await page.getByRole('button', { name: 'Start Event 🏓' }).click();
-  const scoreAll = async () => { const n = await page.locator('.match').count(); for (let c = 0; c < n; c++) { const card = page.locator('.match').nth(c); await card.locator('.scorebox input').first().fill('11'); await card.locator('.scorebox input').nth(1).fill('4'); await card.getByText('Save').click(); await expect(card.locator('.score b')).toBeVisible(); } };
+  const scoreAll = async () => { await expect(page.locator('.match').first()).toBeVisible(); const n = await page.locator('.match').count(); for (let c = 0; c < n; c++) { const card = page.locator('.match').nth(c); await card.locator('.scorebox input').first().fill('11'); await card.locator('.scorebox input').nth(1).fill('4'); await card.getByText('Save').click(); await expect(card.locator('.score b')).toBeVisible(); } };
   await scoreAll(); await page.getByText('Start playoffs / finish').click();
   await expect(page.getByText('Semifinals')).toBeVisible(); await scoreAll();
   await page.getByText('Next playoff round').click(); await expect(page.getByText('Final', { exact: true })).toBeVisible(); await scoreAll();
   await page.getByText('Finish event').click(); await expect(page.getByText(/Champions:/)).toBeVisible();
+});
+test('warns before advancing with unscored courts; labels, typing, format highlight', async ({ page }) => {
+  await page.goto(BASE + '#/new');
+  await page.getByLabel('Event name').fill('Warn test');
+  await page.getByLabel('Place').fill('Gym');
+  await expect(page.getByLabel('Date & time')).toBeVisible();
+  await page.getByRole('radio', { name: /Ladder/ }).click();
+  await expect(page.getByRole('radio', { name: /Ladder/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: /Round Robin/ })).toHaveAttribute('aria-checked', 'false');
+  await page.screenshot({ path: 'e2e/shot-format.png' });
+  await page.getByText('Next: Players').click();
+  for (let i = 1; i <= 8; i++) { await page.getByLabel('Player name').fill('W' + i); await page.getByText('Add new player').click(); }
+  await page.getByRole('button', { name: 'Next ›' }).click();
+  await page.getByRole('button', { name: 'Start Event 🏓' }).click();
+  const c1 = page.locator('.match').first();
+  await c1.locator('.scorebox input').first().fill('11'); await c1.locator('.scorebox input').nth(1).fill('8');
+  await c1.getByText('Save').click(); await expect(c1.locator('.score b')).toHaveText('11–8');
+  let native = false; page.on('dialog', d => { native = true; d.dismiss(); });
+  await page.getByRole('button', { name: /Next: Round 2/ }).click();
+  const sheet = page.getByRole('alertdialog');
+  await expect(sheet).toContainText('Court 2');
+  await page.screenshot({ path: 'e2e/shot-warning.png' });
+  await sheet.getByText('Go back and enter scores').click();
+  await expect(sheet).toHaveCount(0); await expect(page.getByText('Round 1', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: /Next: Round 2/ }).click();
+  await page.getByRole('alertdialog').getByText('Continue anyway').click();
+  await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
+  expect(native).toBe(false);
+  // full width at phone size
+  const w = await page.evaluate(() => [document.querySelector('.page')!.getBoundingClientRect().width, innerWidth]);
+  expect(w[0]).toBe(w[1]);
+  const c = page.locator('.match').first(); await c.locator('.scorebox input').first().fill('9');
+  await page.screenshot({ path: 'e2e/shot-courts.png' });
 });
