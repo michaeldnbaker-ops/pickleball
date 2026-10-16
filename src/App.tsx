@@ -325,7 +325,7 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName }: { m: Match; n
   const entering = !!onScore && (!has || edit);
   const side = (t: string[], v: number | '', set: (n: number | '') => void, pts: number | undefined, win: boolean, tag: string) => <div className={'side ' + (has && !entering ? (win ? 'win' : 'lose') : '') + (me && t.includes(me) ? ' myside' : '')}>
     <div className="names" aria-label={'Team ' + tag}>{t.map(p => onName ? <div key={p}><button className={'nameBtn' + (p === me ? ' meName' : '')} aria-label={'Player ' + nm(p) + ' options'} onClick={() => onName(p)}>{nm(p)}</button></div> : <div key={p} className={p === me ? 'meName' : ''}>{nm(p)}</div>)}</div>
-    {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
+    {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
   </div>;
   return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
     <div className="courtHead"><span className="court">{label ?? 'Court ' + m.court}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
@@ -334,8 +334,12 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName }: { m: Match; n
       : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
   </div>;
 }
-function ScoreBox({ v, set, label = 'Score' }: { v: number | ''; set: (n: number | '') => void; label?: string }) {
-  return <div className="scorebox"><button aria-label="minus" onClick={() => set(Math.max(0, (v || 0) - 1))}>−</button><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={label} placeholder="0" onFocus={e => e.target.select()} value={v} onChange={e => set(e.target.value === '' ? '' : Math.min(99, Number(e.target.value.replace(/\D/g, ''))))} /><button aria-label="plus" onClick={() => set(Math.min(99, (v || 0) + 1))}>+</button></div>;
+/** Typed-only score: number pad, starts empty ('–'), any whole number 0–99. Two digits (or Next) jumps to the other team's box. */
+function ScoreBox({ v, set, label = 'Score', onDone, last }: { v: number | ''; set: (n: number | '') => void; label?: string; onDone?: () => void; last?: boolean }) {
+  const advance = (el: HTMLInputElement) => { const boxes = [...(el.closest('.match')?.querySelectorAll<HTMLInputElement>('.scorebox input') || [])]; const nxt = boxes[boxes.indexOf(el) + 1]; if (nxt) nxt.focus(); else onDone?.(); };
+  return <div className="scorebox"><input type="text" inputMode="numeric" pattern="[0-9]*" enterKeyHint={last ? 'done' : 'next'} autoComplete="off" aria-label={label} placeholder="–" onFocus={e => e.target.select()} value={v}
+    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); advance(e.currentTarget); } }}
+    onChange={e => { const d = e.target.value.replace(/\D/g, '').slice(0, 2); set(d === '' ? '' : Number(d)); if (d.length === 2 && !last) advance(e.target); }} /></div>;
 }
 
 function Me({ ev, code, nm, act }: { ev: EventT; code: string; nm: (id: string) => string; act: Act }) {

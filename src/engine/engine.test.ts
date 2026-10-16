@@ -100,7 +100,7 @@ describe('mid-event changes & playoffs', () => {
   });
 });
 
-import { unscoredCourts as uc } from './engine';
+import { unscoredCourts as uc, unscoredCourts } from './engine';
 import type { Match, Round } from './engine';
 describe('unscoredCourts (advance warning)', () => {
   const R = (ms: Partial<Match>[]) => ({ n: 1, byes: [], matches: ms.map((m, i) => ({ court: i + 1, a: [], b: [], ...m })) }) as unknown as Round;
@@ -226,4 +226,16 @@ describe('Mixed Doubles = organizer-set pairs, no gender', () => {
     expect(opp.size).toBeGreaterThan(2);
   });
   it('drops a preset pair that has a withdrawn player', () => { const ev = mkL(8); ev.teams = [['p0', 'p1']]; ev.active = ev.active.filter(p => p !== 'p1'); startEvent(ev, mulberry(1)); expect(ev.teams.some(t => t.includes('p1'))).toBe(false); });
+});
+
+describe('scores are taken exactly as typed (no target / win-by-2)', () => {
+  it('15–13, 12–10, 7–5, 21–19 count; ties are unscored', () => {
+    const players = ['a', 'b', 'c', 'd'].map(id => ({ id, name: id }));
+    const ev: EventT = { id: 'X', name: 'x', date: '', place: '', format: 'rotating', courts: 1, totalRounds: 5, balanceDupr: false, seeding: 'random', players, active: ['a', 'b', 'c', 'd'], teams: [], rounds: [], createdAt: 0 };
+    const sc: [number, number][] = [[15, 13], [12, 10], [7, 5], [21, 19], [9, 9]];
+    sc.forEach(([x, y], i) => ev.rounds.push({ n: i + 1, byes: [], matches: [{ court: 1, a: ['a', 'b'], b: ['c', 'd'], sa: x, sb: y }] }));
+    const A = standings(ev).find(s => s.id === 'a')!;
+    expect([A.w, A.l, A.gp, A.pf, A.pa, A.diff]).toEqual([4, 0, 4, 55, 47, 8]);
+    expect(unscoredCourts(ev.rounds[4])).toEqual([1]);
+  });
 });

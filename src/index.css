@@ -135,3 +135,5 @@ details{margin:8px 0}summary{font-size:1.05rem;font-weight:800;padding:12px 0;cu
 .tabs button.on .ico{color:var(--skyText)}.youIn .ico{color:#2F6B12}[role=alertdialog] h2 .ico{color:var(--warn)}
 .hdrShare .ico,.refresh .ico{margin:0}
 .joinForm h2{margin-top:6px}.joinForm h3{margin:16px 0 8px;font-weight:700}
+.scorebox{border:2px solid #9DB8D2}.scorebox input{width:88px;min-height:58px;border:none!important;font-size:1.8rem;text-align:center;font-weight:800;padding:4px 0}
+.scorebox input::placeholder{color:#7A8BA0;font-weight:700}

@@ -23,7 +23,7 @@ test('organizer runs a round robin, player view sees it after refresh', async ({
   await expect(page.getByText('Sitting out', { exact: true })).toBeVisible();
   const code = page.url().split('/e/')[1];
   // score both courts independently
-  for (let c = 0; c < 2; c++) { const card = page.locator('.match').nth(c); for (let k = 0; k < 11; k++) await card.locator('.scorebox').first().getByText('+').click(); await card.locator('.scorebox').nth(1).locator('input').fill(String(5 + c)); await card.getByText('Save').click(); await expect(page.locator('.match').nth(c).locator('.final')).toBeVisible(); if (c === 0) await page.waitForTimeout(300); }
+  for (let c = 0; c < 2; c++) { const card = page.locator('.match').nth(c); await card.locator('.scorebox input').first().fill('11'); await card.locator('.scorebox').nth(1).locator('input').fill(String(5 + c)); await card.getByText('Save').click(); await expect(page.locator('.match').nth(c).locator('.final')).toBeVisible(); if (c === 0) await page.waitForTimeout(300); }
   await page.getByRole('button', { name: /Next: Round 2/ }).click();
   await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
   await page.getByRole('button', { name: 'Standings', exact: true }).click();
@@ -387,4 +387,30 @@ test('Share game: short /g/CODE link, native share, copy-link fallback, deep lin
   await p2.getByRole('button', { name: 'Start game', exact: true }).click(); await p2.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   await p2.getByRole('button', { name: 'Share game' }).first().click();
   await expect(p2.getByRole('dialog', { name: 'Share game' }).getByTestId('share-link')).toHaveText(expected);
+});
+test('typed-only scores: empty "–", number pad, auto-advance, any score (15–13, 12–10), ties blocked, stats exact', async ({ page }) => {
+  const tag = Math.random().toString(36).slice(2, 6);
+  await setup(page, ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal'].map(n => n + tag), 1, 2);
+  const c1 = page.locator('.match').first(), c2 = page.locator('.match').nth(1);
+  await expect(page.locator('.scorebox button')).toHaveCount(0); // no +/− steppers
+  const a1 = c1.getByLabel('Team A score'), b1 = c1.getByLabel('Team B score');
+  await expect(a1).toHaveValue(''); await expect(a1).toHaveAttribute('placeholder', '–'); await expect(a1).toHaveAttribute('inputmode', 'numeric');
+  await a1.click(); await page.keyboard.type('15'); await expect(b1).toBeFocused(); // auto-advance after 2 digits
+  await page.screenshot({ path: 'e2e/shot-score-entry.png' });
+  await page.keyboard.type('13'); await c1.getByText('Save score').click();
+  await expect(c1.locator('.pts').first()).toHaveText('15'); await expect(c1.locator('.pts').nth(1)).toHaveText('13');
+  // tie can't be saved; single digits + Next/Enter advance
+  const a2 = c2.getByLabel('Team A score'), b2 = c2.getByLabel('Team B score');
+  await a2.click(); await page.keyboard.type('9'); await page.keyboard.press('Enter'); await expect(b2).toBeFocused(); await page.keyboard.type('9');
+  await expect(c2.getByText('Save score')).toBeDisabled();
+  await b2.fill('12'); await a2.fill('10'); await c2.getByText('Save score').click();
+  await expect(c2.locator('.pts').first()).toHaveText('10'); await expect(c2.locator('.pts').nth(1)).toHaveText('12');
+  await expect(c2.locator('.side').nth(1)).toHaveClass(/win/);
+  // standings: point differential exactly as typed
+  const winA = (await c1.locator('.side').first().locator('.nameBtn').first().textContent())!.trim();
+  await page.getByRole('button', { name: 'Standings', exact: true }).click();
+  const row = page.locator('tbody tr', { hasText: winA }); await expect(row.locator('td').nth(5)).toHaveText('15'); await expect(row.locator('td').nth(6)).toHaveText('13'); await expect(row.locator('td').nth(7)).toHaveText('+2');
+  // all-time stats log the exact score
+  await page.waitForTimeout(1500); await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
+  await expect(page.locator('.hist').first()).toContainText('15–13');
 });
