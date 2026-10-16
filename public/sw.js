@@ -1,9 +1,7 @@
 // Network-first, never from the HTTP cache, for the app shell; cache fallback only when offline. API calls are not cached.
-const C='pb-v17';
+const C='pb-v18';
 self.addEventListener('install',e=>self.skipWaiting());
-self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==C)await caches.delete(k);await self.clients.claim();
-// a newer build took over: reload open tabs so they show it right away (once, on activation)
-for(const c of await self.clients.matchAll({type:'window'}))try{await c.navigate(c.url);}catch{}})()));
+self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==C)await caches.delete(k);await self.clients.claim();})()));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin)return;
 if(u.pathname.endsWith('/version.json'))return;
 const html=e.request.mode==='navigate'||u.pathname.endsWith('/')||u.pathname.endsWith('.html');
