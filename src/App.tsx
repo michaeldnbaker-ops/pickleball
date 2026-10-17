@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -37,7 +37,7 @@ const FORMATS: { id: Format; name: string; desc: string }[] = [
   { id: 'mixed', name: 'Mixed Doubles', desc: 'Organizer sets the pairs; pairs stay together and rotate opponents.' },
   { id: 'fixed', name: 'Set Partners RR', desc: 'Same partner all event, rotate opponents.' },
   { id: 'kotc', name: 'King of the Court', desc: 'Up & down the river: winners move up a court, losers down, partners split.' },
-  { id: 'ladder', name: 'Ladder', desc: 'Courts re-seeded by standings each round: best 4 on Court 1.' },
+  { id: 'ladder', name: 'Ladder', desc: 'Courts re-seeded by standings each round: best 4 on Court A.' },
   { id: 'team', name: 'Team Battle (4-player teams)', desc: 'MLP-style: teams of 4 play two doubles games per tie.' },
 ];
 const fmtName = (f: Format) => (FORMATS.find(x => x.id === f) ?? FORMATS[0]).name; // legacy formats (e.g. old 'mixed') show as Round Robin
@@ -87,6 +87,7 @@ function Past() {
   </div>;
 }
 
+const courtRange = (n: number) => n > 1 ? 'A–' + courtName(n) : 'A';
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
 function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number }; onClick: () => void; join?: boolean }) {
   const w = fmtWhen(g.date); const live = (g.rounds ?? 0) > 0 && new Date(g.date) <= new Date();
@@ -215,7 +216,7 @@ function NewEvent() {
       {unit > 1 && <p className="muted small">{unit === 2 ? 'Pairs' : 'Teams of 4'} are formed when the game starts; anyone left over rotates in as a sub.</p>}
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 3 && <>
-      <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} />
+      <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} /><p className="muted small courtRange">Courts {courtRange(courts)}</p>
       <p className="muted small">Games start with exactly 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras sit out in fair rotation. Partners don't repeat until they have to.</p>
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
@@ -334,7 +335,7 @@ function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: stri
     {vi !== curIdx && <button className="big" onClick={() => setSel(curIdx)}>Back to current round</button>}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="unsc-t" onClick={e => e.stopPropagation()}>
       <h2 id="unsc-t"><Icon n="alert" size={22} /> {missing.length === 1 ? '1 court has' : missing.length + ' courts have'} no score</h2>
-      <p>Court {missing.join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
+      <p>Court {missing.map(courtName).join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
       <button className="big primary" onClick={() => setAsk(false)}>Go back and enter scores</button>
       <button className="big danger" onClick={() => { setAsk(false); advance(); }}>Continue anyway</button></div></div>}
   </div>;
@@ -352,7 +353,7 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName }: { m: Match; n
     {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
   </div>;
   return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
-    <div className="courtHead"><span className="court">{label ?? 'Court ' + m.court}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
+    <div className="courtHead"><span className="court">{label ?? 'Court ' + courtName(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
     {side(m.a, a, setA, m.sa, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, has && !winA, 'B')}
     {onScore && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
       : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
@@ -381,13 +382,13 @@ function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => st
     <div className="row between"><h2>Hi, {nm(me)}</h2><button className="ghost small" onClick={() => pick('')}>Not you?</button></div>
     <div className="card next">{ev.finished ? <b>Event finished</b> : cur?.m ? <>
       <div className="muted">{scored(cur.m) ? 'Your latest game' : 'Your game now'} · {roundLabel(ev, cur.i)}</div>
-      <div className="bigcourt">Court {cur.m.court}</div>
+      <div className="bigcourt">Court {courtName(cur.m.court)}</div>
       <div>Partner: <b>{partner(cur.m).map(nm).join(', ') || '—'}</b></div>
       <div>vs <b>{opps(cur.m).map(nm).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
     <h2>Your games</h2>
-    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + m.court} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
-    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + m.court + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
+    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + courtName(m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
+    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + courtName(m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
@@ -427,7 +428,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
     <div className="card locked"><div className="muted small">Day &amp; time</div><div className="lockedVal">{fmtWhen(ev.date).day} {fmtWhen(ev.date).date} · {fmtWhen(ev.date).time}</div>
-      <div className="muted small">Courts · Format</div><div className="lockedVal">{ev.courts} court{ev.courts === 1 ? '' : 's'} · {fmtName(ev.format)}{ev.balanceDupr ? ' · DUPR balanced' : ''}</div>
+      <div className="muted small">Courts · Format</div><div className="lockedVal">{ev.courts} court{ev.courts === 1 ? '' : 's'} ({courtRange(ev.courts)}) · {fmtName(ev.format)}{ev.balanceDupr ? ' · DUPR balanced' : ''}</div>
       {unit > 1 && <><div className="muted small">{unit === 2 ? 'Pairs' : 'Teams'}</div><div className="lockedVal">{ev.teams.filter(t => t.length === unit).map(t => t.map(id => ev.players.find(p => p.id === id)?.name || '?').join(' & ')).join(' · ')}</div></>}</div>
     {host ? <><label>Total rounds</label><Stepper value={ev.totalRounds} min={Math.max(1, ev.rounds.filter(r => !r.playoff).length)} max={60} onChange={n => act(e => { e.totalRounds = n; e.finished = false; })} />
       {!ev.finished && <button className="big danger" onClick={() => confirm('End the event now? Standings are final; unplayed rounds are dropped.') && act(e => endEvent(e))}><Icon n="flag" /> End early</button>}
@@ -458,7 +459,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   return <div className="page">
     <header><button className="ghost" onClick={() => go('')} aria-label="Back">‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
-    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts · {ev.totalRounds} rounds</div></div></div>
+    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtRange(ev.courts)}) · {ev.totalRounds} rounds</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}

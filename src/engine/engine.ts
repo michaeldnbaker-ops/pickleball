@@ -209,13 +209,15 @@ export function nextPlayoffRound(ev: EventT): Round | null {
 
 /** Regenerate the latest round if no scores have been entered (after roster/court change). */
 /** Courts in a round that have no valid (non-tied) score yet. */
+/** Display-only court label: 1→A, 2→B … 26→Z, 27→AA. Stored court numbers are unchanged. */
+export function courtName(n: number): string { let s = ''; for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + (x - 1) % 26) + s; return s || String(n); }
 export function unscoredCourts(r: Round | undefined): number[] { return r ? r.matches.filter(m => !scored(m)).map(m => m.court) : []; }
 export function canRegenerate(ev: EventT) { const r = ev.rounds[ev.rounds.length - 1]; return !!r && !r.playoff && !r.matches.some(m => m.sa != null || m.sb != null); }
 
 export function toCSV(ev: EventT) {
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || id;
   const rows = [['Round', 'Court', 'Team A', 'Team B', 'Score A', 'Score B']];
-  for (const r of ev.rounds) for (const m of r.matches) rows.push([String(r.playoff ? 'Playoff ' + r.n : r.n), String(m.court), m.a.map(nm).join(' & '), m.b.map(nm).join(' & '), String(m.sa ?? ''), String(m.sb ?? '')]);
+  for (const r of ev.rounds) for (const m of r.matches) rows.push([String(r.playoff ? 'Playoff ' + r.n : r.n), courtName(m.court), m.a.map(nm).join(' & '), m.b.map(nm).join(' & '), String(m.sa ?? ''), String(m.sb ?? '')]);
   return rows.map(r => r.map(x => '"' + x.replace(/"/g, '""') + '"').join(',')).join('\n');
 }
 

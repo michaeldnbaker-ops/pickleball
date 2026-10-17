@@ -85,7 +85,7 @@ test('warns before advancing with unscored courts; labels, typing, format highli
   let native = false; page.on('dialog', d => { native = true; d.dismiss(); });
   await page.getByRole('button', { name: /Next: Round 2/ }).click();
   const sheet = page.getByRole('alertdialog');
-  await expect(sheet).toContainText('Court 2');
+  await expect(sheet).toContainText('Court B');
   await page.screenshot({ path: 'e2e/shot-warning.png' });
   await sheet.getByText('Go back and enter scores').click();
   await expect(sheet).toHaveCount(0); await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
@@ -255,7 +255,7 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   const p3 = await ctx.newPage(); await p3.goto(BASE + '#/e/' + code + '/join'); await p3.evaluate(c => { localStorage.removeItem('pb:me:' + c); localStorage.removeItem('pb:org:' + c); }, code); await p3.reload();
   await expect(p3.getByText('This game already started')).toBeVisible(); await expect(p3.getByText('Add yourself to this game')).toHaveCount(0);
   await p3.screenshot({ path: 'e2e/shot-started.png' });
-  const listed = await (await p3.request.get(API + '/events?test=1&from=2000-01-01T00:00')).json(); expect(listed.events.map((e: { code: string }) => e.code)).not.toContain(code);
+  const listed = await (await p3.request.get(API + '/events?test=1&from=2000-01-01T00:00')).json(); expect(listed.events.find((e: { code: string }) => e.code === code)?.rounds).toBeGreaterThan(0); // started games stay listed (opens the game)
   const cur = (await (await p3.request.get(API + '/e/' + code)).json()).data;
   const bad = await p3.request.put(API + '/e/' + code, { data: { data: { ...cur, players: [...cur.players, { id: 'x' + tag, name: 'Sneak-' + tag }], active: [...cur.active, 'x' + tag] } } }); expect(bad.status()).toBe(409);
   expect(cur.startedAt).toBeTruthy(); expect(cur.host).toBeTruthy();
@@ -523,4 +523,18 @@ test('API: started games cannot be deleted or have players removed', async ({ re
   expect((await request.put(API + '/e/' + code, { data: { data: { ...base, players: players.slice(0, 3), active: ['q0', 'q1', 'q2'], rounds, startedAt: 1, startedBy: 'q0' } } })).status()).toBe(409);
   // cleanup: finish it so it never shows in Join (hidden anyway)
   await request.put(API + '/e/' + code + '?by=q0', { data: { data: { ...base, players, active: players.map(p => p.id), rounds, startedAt: 1, startedBy: 'q0', finished: true } } });
+});
+
+test('courts display as letters (A, B, C); stored court numbers unchanged', async ({ page }) => {
+  page.on('dialog', d => d.accept());
+  await page.goto(BASE); await page.getByText('Create a game').click(); await page.getByPlaceholder('e.g. the gym').fill('Letters test');
+  await page.getByText('Next: Players').click();
+  for (let i = 1; i <= 12; i++) { await page.getByPlaceholder('Name').fill('L' + i); await page.getByText('Add new player').click(); }
+  await page.getByRole('button', { name: 'Next ›' }).click();
+  await startGame(page);
+  await expect(page.locator('.courtHead .court')).toHaveText(['Court A', 'Court B', 'Court C']);
+  await page.screenshot({ path: '/workspace/shot-court-letters-local.png' });
+  const code = (await page.locator('header .small b').first().textContent())!.trim();
+  const ev = (await (await page.request.get(API + '/e/' + code)).json()).data;
+  expect(ev.rounds[0].matches.map((m: { court: number }) => m.court)).toEqual([1, 2, 3]);
 });

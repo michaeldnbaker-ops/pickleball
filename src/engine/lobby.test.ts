@@ -10,3 +10,7 @@ describe('lobby', () => {
   it('removes a player from players, active and pairs before start', () => { const e = ev(); expect(removePlayer(e, 'a')).toBe(true); expect(e.players.map(p => p.id)).toEqual(['b', 'c']); expect(e.active).toEqual(['b', 'c']); expect(e.teams).toEqual([]); });
   it('refuses removal after start', () => { const e = ev(); e.rounds = [{ n: 1, matches: [], byes: [] }] as unknown as EventT['rounds']; expect(removePlayer(e, 'a')).toBe(false); expect(e.players).toHaveLength(3); });
 });
+import { courtName } from './engine';
+describe('court letters (display only)', () => {
+  it('maps 1..n to A..Z, then AA', () => { expect([1, 2, 3, 4, 26, 27, 28].map(courtName)).toEqual(['A', 'B', 'C', 'D', 'Z', 'AA', 'AB']); });
+});
