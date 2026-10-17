@@ -538,3 +538,14 @@ test('courts display as letters (A, B, C); stored court numbers unchanged', asyn
   const ev = (await (await page.request.get(API + '/e/' + code)).json()).data;
   expect(ev.rounds[0].matches.map((m: { court: number }) => m.court)).toEqual([1, 2, 3]);
 });
+
+test('API: creator phone that also joined as a player can End a game started as organizer', async ({ request }) => {
+  const code = 'EN' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const players = ['A', 'B', 'C', 'D'].map((n, i) => ({ id: 'e' + i, name: n }));
+  const base = { id: code, name: 'End test', date: '2026-10-17T09:00', place: 'x', format: 'rotating', courts: 1, totalRounds: 3, balanceDupr: false, seeding: 'random', teams: [], hidden: true, players, active: players.map(p => p.id) };
+  const rounds = [{ n: 1, matches: [{ court: 1, a: ['e0', 'e1'], b: ['e2', 'e3'], sa: 11, sb: 5 }], byes: [] }];
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, rounds, startedAt: 1, startedBy: 'organizer', host: 'organizer' } } })).ok()).toBe(true);
+  expect((await request.put(API + '/e/' + code + '?by=e1', { data: { data: { ...base, rounds, startedAt: 1, startedBy: 'organizer', finished: true } } })).status()).toBe(409); // a player phone can't end it
+  expect((await request.put(API + '/e/' + code + '?by=e0&org=1', { data: { data: { ...base, rounds, startedAt: 1, startedBy: 'organizer', finished: true } } })).ok()).toBe(true);
+  expect((await (await request.get(API + '/e/' + code)).json()).data.finished).toBe(true);
+});

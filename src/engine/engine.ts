@@ -365,7 +365,11 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
 }
 /** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
 export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
-export function endEvent(ev: EventT) { ev.finished = true; delete ev.plan; delete ev.planKey; }
+/** End: keep every played round (including fully scored play-ahead rounds), drop unplayed ones, mark complete. */
+export function endEvent(ev: EventT) {
+  for (const r of ev.plan || []) { if (!r.matches.length || !r.matches.every(m => scored(m) && m.sa !== m.sb)) break; ev.rounds.push({ n: r.n, matches: r.matches, byes: r.byes }); }
+  ev.finished = true; delete ev.plan; delete ev.planKey;
+}
 
 /** A game can start only with exactly 4, 8, 12 or 16 players. */
 export const startOk = (n: number) => n === 4 || n === 8 || n === 12 || n === 16;

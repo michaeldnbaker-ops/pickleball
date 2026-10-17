@@ -60,7 +60,6 @@ export default {
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds
           from events where coalesce((data->>'finished')::boolean,false)=false and (coalesce((data->>'hidden')::boolean,false)=false or $2)
-            and jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))=0
             and data->>'date' >= $1 order by data->>'date' asc limit 50`, [from, test]);
         return j({ events: rows });
       }
@@ -111,7 +110,9 @@ export default {
           if (ids(body.data.players) !== ids(cur.players)) return j({ error: 'started', field: 'players', data: cur }, 409);
           if (ids(body.data.active) !== ids(cur.active)) return j({ error: 'started', field: 'active', data: cur }, 409);
           // Only the host (who tapped Start) can end/reopen the game or change the number of rounds. Older games with no starter are unchanged.
-          if (cur.startedBy && by !== cur.startedBy) {
+          // The creator's phone (org=1) counts as the starter when the game was started as 'organizer' (it may also have joined as a player).
+          const isStarter = by === cur.startedBy || (cur.startedBy === 'organizer' && url.searchParams.get('org') === '1');
+          if (cur.startedBy && !isStarter) {
             if (!!body.data.finished !== !!cur.finished) return j({ error: 'host only', field: 'finished', data: cur }, 409);
             if (body.data.totalRounds !== cur.totalRounds) return j({ error: 'host only', field: 'totalRounds', data: cur }, 409);
           }
@@ -123,6 +124,9 @@ export default {
           // Starting: exactly 4, 8, 12 or 16 players.
           const n = new Set(body.data.active || []).size;
           if (![4, 8, 12, 16].includes(n)) return j({ error: 'need 4, 8, 12 or 16 players', players: n, data: cur }, 409);
+          // The starter must be someone in the game (a removed player's phone can't start as a ghost); otherwise the creator's phone ('organizer').
+          const pids = new Set((body.data.players || []).map((p: { id: string }) => p.id));
+          for (const f of ['startedBy', 'host'] as const) if (body.data[f] && body.data[f] !== 'organizer' && !pids.has(body.data[f])) body.data[f] = 'organizer';
         }
         const { rows } = await pool.query('insert into events(code,data) values($1,$2) on conflict(code) do update set data=excluded.data, version=events.version+1, updated_at=now() returning version, updated_at', [code, JSON.stringify(body.data)]);
         let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); } } catch (e) { stats = String(e); }

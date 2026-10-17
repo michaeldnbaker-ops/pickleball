@@ -14,3 +14,11 @@ import { courtName } from './engine';
 describe('court letters (display only)', () => {
   it('maps 1..n to A..Z, then AA', () => { expect([1, 2, 3, 4, 26, 27, 28].map(courtName)).toEqual(['A', 'B', 'C', 'D', 'Z', 'AA', 'AB']); });
 });
+import { endEvent } from './engine';
+describe('End early', () => {
+  it('keeps played + fully scored play-ahead rounds, drops unplayed, marks finished', () => {
+    const m = (sa?: number, sb?: number) => ({ court: 1, a: ['a', 'b'], b: ['c', 'd'], sa, sb });
+    const ev = { rounds: [{ n: 1, matches: [m(11, 2)], byes: [] }], plan: [{ n: 2, matches: [m(11, 9)], byes: [] }, { n: 3, matches: [m()], byes: [] }], planKey: 'k', finished: false } as never as import('./engine').EventT;
+    endEvent(ev); expect(ev.finished).toBe(true); expect(ev.rounds.map(r => r.n)).toEqual([1, 2]); expect(ev.plan).toBeUndefined();
+  });
+});
