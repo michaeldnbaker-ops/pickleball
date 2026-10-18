@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { closeEvent } from './close';
+import { capOf, overCap } from './cap';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'content-type': 'application/json' };
@@ -13,7 +14,7 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
-interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
+interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -69,7 +70,8 @@ export default {
         // Join shows only games whose start time is less than 3 hours ago (Central time) or later.
         const from = ctLocal(Date.now() - 3 * 3600e3);
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
-            coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds
+            coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds,
+            case when data->>'maxPlayers' in ('4','8','12','16') then (data->>'maxPlayers')::int end as max
           from events where coalesce((data->>'finished')::boolean,false)=false and (coalesce((data->>'hidden')::boolean,false)=false or $2)
             and data->>'date' >= $1 order by data->>'date' asc limit 50`, [from, test]);
         return j({ events: rows });
@@ -110,6 +112,8 @@ export default {
         if (cur?.finished && body.data) return j({ error: 'finished', data: cur }, 409);
         const ids = (xs: unknown) => JSON.stringify([...new Set(((xs || []) as unknown[]).map(x => typeof x === 'string' ? x : (x as { id: string }).id))].sort());
         const started = !!cur && (cur.rounds || []).length > 0;
+        // The player cap is set once on Create and can't be changed or removed later; older games without one stay uncapped.
+        if (cur && body.data) { if (capOf(cur)) body.data.maxPlayers = capOf(cur); else delete body.data.maxPlayers; }
         if (started && body.data) {
           // Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
@@ -128,6 +132,9 @@ export default {
             if (body.data.totalRounds !== cur.totalRounds) return j({ error: 'host only', field: 'totalRounds', data: cur }, 409);
           }
           for (const f of ['startedAt', 'startedBy', 'host'] as const) if (cur[f] !== undefined) body.data[f] = cur[f];
+        } else if (body.data && !(body.data.rounds || []).length && overCap(cur, body.data)) {
+          // Before the start: no joining once the signed-up count reaches the cap. Drop outs / removals reopen spots.
+          return j({ error: 'full', max: capOf(cur ?? body.data), data: cur }, 409);
         } else if (body.data && !(body.data.rounds || []).length && dupCount(body.data) > (cur ? dupCount(cur) : 0)) {
           // Before the start: no two players with the same name (trimmed, case-insensitive). Existing duplicates are left alone so they can be removed.
           return j({ error: 'duplicate name', data: cur }, 409);
@@ -135,6 +142,7 @@ export default {
           // Starting: exactly 4, 8, 12 or 16 players.
           const n = new Set(body.data.active || []).size;
           if (![4, 8, 12, 16].includes(n)) return j({ error: 'need 4, 8, 12 or 16 players', players: n, data: cur }, 409);
+          if (overCap(cur, body.data)) return j({ error: 'full', max: capOf(cur ?? body.data), data: cur }, 409);
           // The starter must be someone in the game (a removed player's phone can't start as a ghost); otherwise the creator's phone ('organizer').
           const pids = new Set((body.data.players || []).map((p: { id: string }) => p.id));
           for (const f of ['startedBy', 'host'] as const) if (body.data[f] && body.data[f] !== 'organizer' && !pids.has(body.data[f])) body.data[f] = 'organizer';

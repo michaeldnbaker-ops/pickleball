@@ -22,10 +22,10 @@ export async function fetchRemote(code: string): Promise<EventT | null> {
   if (r.status === 404) return null; if (!r.ok) throw new Error('HTTP ' + r.status);
   return (await r.json()).data;
 }
-export class StartedError extends Error { constructor() { super('started'); } }
+export class StartedError extends Error { reason: string; constructor(reason = 'started') { super(reason); this.reason = reason; } }
 export async function pushRemote(code: string, ev: EventT) {
   const r = await fetch(`${API}/e/${code}?by=${encodeURIComponent(getMe(code) || (isOrg(code) ? 'organizer' : ''))}${isOrg(code) ? '&org=1' : ''}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
-  if (r.status === 409) throw new StartedError();
+  if (r.status === 409) { let why = 'started'; try { why = (await r.json()).error || why; } catch { /* keep */ } throw new StartedError(why); }
   if (!r.ok) throw new Error('HTTP ' + r.status);
 }
 /** Server refused a join because the game already started: drop the local edit and take the server copy. */
@@ -52,7 +52,7 @@ export async function mutate(code: string, fn: (e: EventT) => void, current: Eve
   try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch (e) { if (e instanceof StartedError) return rejected(code, base); return { ev, online: false }; }
 }
 
-export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number }
+export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number; max?: number | null }
 /** Public upcoming games not yet started, soonest first (hides events more than a day past). */
 export async function listEvents(): Promise<Listed[]> {
   const d = new Date(Date.now() - 864e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());

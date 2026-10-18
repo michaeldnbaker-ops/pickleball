@@ -11,3 +11,10 @@ export function removePlayer(ev: EventT, id: string) {
   ev.players = ev.players.filter(p => p.id !== id); ev.active = ev.active.filter(x => x !== id);
   ev.teams = (ev.teams || []).filter(t => !t.includes(id)); return true;
 }
+export const CAPS = [4, 8, 12, 16];
+/** The game's player cap (4/8/12/16), or 0 for no cap (older games). */
+export const capOf = (ev: Pick<EventT, 'maxPlayers'>) => CAPS.includes(Number(ev.maxPlayers)) ? Number(ev.maxPlayers) : 0;
+/** Signed up count has reached the cap: no more joins until someone drops out. */
+export const isFull = (ev: Pick<EventT, 'maxPlayers' | 'active'>) => { const c = capOf(ev); return !!c && new Set(ev.active).size >= c; };
+/** Smallest cap that fits n pre-selected players (default 8). */
+export const fitCap = (n: number, def = 8) => n <= def ? def : CAPS.find(c => c >= n) ?? 0;

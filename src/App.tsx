@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { nameTaken, removePlayer } from './engine/lobby';
+import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
@@ -89,14 +89,17 @@ function Past() {
 
 const courtRange = (n: number) => n > 1 ? 'A–' + courtName(n) : 'A';
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
-function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number }; onClick: () => void; join?: boolean }) {
-  const w = fmtWhen(g.date); const live = (g.rounds ?? 0) > 0 && new Date(g.date) <= new Date();
+function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null }; onClick: () => void; join?: boolean }) {
+  const w = fmtWhen(g.date); const started = (g.rounds ?? 0) > 0; const live = started && new Date(g.date) <= new Date();
+  const full = !started && !!g.max && (g.players ?? 0) >= g.max;
+  // Started games open (tap your name); full games show Full (still openable by those already in).
+  const pill = started ? 'Open' : full ? 'Full' : 'Join';
   return <button className="card tap game" onClick={onClick}>
     <div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div>
     <div className="gInfo"><div className="gTime">{w.day} · {w.time}{live && <span className="live">In progress</span>}</div>
       <div className="gName">{g.name}</div>
-      <div className="muted small">{g.place || 'Place TBA'}{g.players != null ? ` · ${g.players} players` : ''}</div></div>
-    {join ? <span className="joinPill">Join</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
+      <div className="muted small">{g.place || 'Place TBA'}{g.players != null ? ` · ${g.max && !started ? g.players + '/' + g.max : g.players} players` : ''}</div></div>
+    {join ? <span className={'joinPill' + (pill !== 'Join' ? ' pill' + pill : '')}>{pill}</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
 }
 
 /** Join: only "Create a game" and the list of upcoming games. Pick a game → Join → enter your name. */
@@ -184,6 +187,8 @@ function NewEvent() {
   const [courts, setCourts] = useState(3); const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
+  const [maxP, setMaxP] = useState(8);
+  useEffect(() => { if (players.length > maxP) { const c = fitCap(players.length); if (c) setMaxP(c); } }, [players.length, maxP]);
   const [busy, setBusy] = useState(false);
   const sel = new Set(players.map(p => p.id));
   const toggle = (p: Player) => setPlayers(sel.has(p.id) ? players.filter(x => x.id !== p.id) : [...players, p]);
@@ -191,7 +196,7 @@ function NewEvent() {
     setBusy(true); localStorage.setItem('pb:lastPlace', place);
     players.forEach(S.addToRoster);
     const code = S.newCode();
-    const ev: EventT = { id: code, name, date, place, format, courts, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(S.testMode() ? { hidden: true } : {}) };
+    const ev: EventT = { id: code, name, date, place, format, courts, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.testMode() ? { hidden: true } : {}) };
     S.setOrg(code);
     S.saveLocal(code, ev, true);
     try { await S.pushRemote(code, ev); S.saveLocal(code, ev, false); } catch { /* will push later */ }
@@ -216,6 +221,9 @@ function NewEvent() {
       {unit > 1 && <p className="muted small">{unit === 2 ? 'Pairs' : 'Teams of 4'} are formed when the game starts; anyone left over rotates in as a sub.</p>}
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 3 && <>
+      <label id="max-l">Max players</label>
+      <div className="row maxRow" role="radiogroup" aria-labelledby="max-l">{CAPS.map(c => <button key={c} type="button" role="radio" aria-checked={maxP === c} disabled={c < players.length} className={'chip maxChip ' + (maxP === c ? 'on' : '')} onClick={() => setMaxP(c)}>{c}</button>)}</div>
+      <p className="muted small">Join closes once {maxP} players have signed up; if someone drops out, the spot opens again.</p>
       <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} /><p className="muted small courtRange">Courts {courtRange(courts)}</p>
       <p className="muted small">Games start with exactly 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras sit out in fair rotation. Partners don't repeat until they have to.</p>
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
@@ -447,7 +455,10 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     act(e => { if (e.rounds.length || !startOk(e.active.length)) return; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
+  // This phone forgets a name that was removed (by the creator) or dropped elsewhere, so it can join again.
+  useEffect(() => { if (me && !loading && !ev.players.some(p => p.id === me)) { S.setMe(code, ''); setMeS(''); } }, [me, loading, ev, code]);
   const joined = ev.players.filter(p => ev.active.includes(p.id));
+  const cap = capOf(ev); const full = isFull(ev);
   const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me)); const ok = startOk(joined.length);
   const org = S.isOrg(code);
   const drop = (id: string, name: string, self: boolean) => { if (!confirm(self ? 'Drop out of this game?' : 'Remove ' + name + ' from this game?')) return;
@@ -459,11 +470,12 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   return <div className="page">
     <header><button className="ghost" onClick={() => go('')} aria-label="Back">‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
-    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtRange(ev.courts)}) · {ev.totalRounds} rounds</div></div></div>
-    <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> Signing up · <b>{joined.length} joined</b></div>
+    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtRange(ev.courts)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
+    <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> {full ? 'Full' : 'Signing up'} · <b>{joined.length} joined</b>{cap ? <span className="muted"> · {cap} max</span> : null}</div>
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
-    {!me && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name)) return; e.players.push(p); e.active.push(p.id); }).then(() => { if (S.localEvent(code)?.players.some(x => x.id === p.id)) pick(p.id); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
+    {!me && full && <FullCard ev={ev} onPick={pick} />}
+    {!me && !full && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }).then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) pick(p.id); else if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
@@ -554,6 +566,17 @@ function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player) => v
   return <div className="joinForm"><h2>Add yourself to this game</h2>
     <PlayerForm autoFocus big label="Join" onAdd={onJoin} />
     {joined.length > 0 && <><h3 className="small muted">Already joined? Tap your name</h3>
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
+  </div>;
+}
+
+/** Join closed: the game reached its player cap. Those already in can still tap their name. */
+function FullCard({ ev, onPick }: { ev: EventT; onPick: (id: string) => void }) {
+  const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  return <div className="card fullCard" role="status"><h2>Game is full</h2>
+    <p className="muted">All {capOf(ev)} spots are taken. If someone drops out, a spot opens up.</p>
+    <button className="big" onClick={() => go('join')}>Find another game</button>
+    {joined.length > 0 && <><h3 className="small muted">Already playing? Tap your name</h3>
       <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
   </div>;
 }

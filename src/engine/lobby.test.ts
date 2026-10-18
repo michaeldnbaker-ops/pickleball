@@ -22,3 +22,11 @@ describe('End early', () => {
     endEvent(ev); expect(ev.finished).toBe(true); expect(ev.rounds.map(r => r.n)).toEqual([1, 2]); expect(ev.plan).toBeUndefined();
   });
 });
+import { capOf, isFull, fitCap } from './lobby';
+describe('player cap', () => {
+  const g = (n: number, max?: number) => ({ active: Array.from({ length: n }, (_, i) => 'p' + i), maxPlayers: max }) as Pick<EventT, 'active' | 'maxPlayers'>;
+  it('only 4/8/12/16 count as a cap; older games have none', () => { expect(capOf(g(0, 8))).toBe(8); expect(capOf(g(0))).toBe(0); expect(capOf(g(0, 7))).toBe(0); });
+  it('full at the cap, open below it, never full without a cap', () => { expect(isFull(g(8, 8))).toBe(true); expect(isFull(g(7, 8))).toBe(false); expect(isFull(g(30))).toBe(false); });
+  it('a drop out reopens a spot', () => { const e = ev(); (e as EventT).maxPlayers = 4; e.players.push({ id: 'd', name: 'Dee' }); e.active.push('d'); expect(isFull(e)).toBe(true); removePlayer(e, 'd'); expect(isFull(e)).toBe(false); });
+  it('default cap 8 grows to fit pre-selected players', () => { expect(fitCap(0)).toBe(8); expect(fitCap(8)).toBe(8); expect(fitCap(9)).toBe(12); expect(fitCap(13)).toBe(16); expect(fitCap(17)).toBe(0); });
+});
