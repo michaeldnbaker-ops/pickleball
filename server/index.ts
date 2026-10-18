@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { closeEvent } from './close';
-import { capOf, overCap, validCourtSet } from './cap';
+import { capOf, overCap, validCourtSet, capChange } from './cap';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'content-type': 'application/json' };
@@ -112,10 +112,10 @@ export default {
         if (cur?.finished && body.data) return j({ error: 'finished', data: cur }, 409);
         const ids = (xs: unknown) => JSON.stringify([...new Set(((xs || []) as unknown[]).map(x => typeof x === 'string' ? x : (x as { id: string }).id))].sort());
         const started = !!cur && (cur.rounds || []).length > 0;
-        // The player cap is set once on Create and can't be changed or removed later; older games without one stay uncapped.
-        // Picked courts (by letter) must match the court count; anything malformed is dropped so the game falls back to A, B, C….
+                // Picked courts (by letter) must match the court count; anything malformed is dropped so the game falls back to A, B, C….
         if (body.data && 'courtSet' in body.data && !validCourtSet(body.data.courtSet, body.data.courts)) delete body.data.courtSet;
-        if (cur && body.data) { if (capOf(cur)) body.data.maxPlayers = capOf(cur); else delete body.data.maxPlayers; }
+        // The player cap: the creator's phone can change it before the start (4/8/12/16, never below the sign-ups); locked after the start.
+        if (cur && body.data) { const c = capChange(cur, body.data, { started, org: url.searchParams.get('org') === '1' }); if (c.error) return j({ error: c.error, data: cur }, 409); if (c.max) body.data.maxPlayers = c.max; else delete body.data.maxPlayers; }
         if (started && body.data) {
           // Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);

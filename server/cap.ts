@@ -12,3 +12,14 @@ export function overCap(cur: CapEv | undefined | null, next: CapEv) {
 export function validCourtSet(cs: unknown, courts: unknown) {
   return Array.isArray(cs) && cs.length === Number(courts) && cs.length > 0 && cs.every((x, i) => Number.isInteger(x) && x >= 1 && x <= 60 && (i === 0 || x > cs[i - 1]));
 }
+/** What a write may do to the cap. Before the start the creator's phone may set it to 4/8/12/16, never below the current sign-ups; everyone else (and everyone after the start) keeps the stored cap. */
+export function capChange(cur: CapEv | undefined | null, next: CapEv, opts: { started: boolean; org: boolean }): { max: number; error?: string } {
+  const keep = capOf(cur);
+  const want = capOf(next); const raw = (next as { maxPlayers?: unknown }).maxPlayers;
+  if (!cur) return { max: want };
+  if (opts.started || !opts.org || raw === undefined || want === keep) return { max: keep };
+  if (!want) return { max: keep, error: 'bad max' };
+  const n = new Set(next.active || []).size;
+  if (want < n) return { max: keep, error: 'max below players' };
+  return { max: want };
+}

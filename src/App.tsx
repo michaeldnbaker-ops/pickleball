@@ -483,6 +483,10 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtsText(ev)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> {full ? 'Full' : 'Signing up'} · <b>{joined.length} joined</b>{cap ? <span className="muted"> · {cap} max</span> : null}</div>
+    {org && <div className="card maxEdit"><div className="muted small" id="lobby-max-l">Max players (only you can change this until the game starts)</div>
+      <div className="row maxRow" role="radiogroup" aria-labelledby="lobby-max-l">{CAPS.map(c => <button key={c} type="button" role="radio" aria-checked={cap === c} disabled={c < joined.length} className={'chip maxChip ' + (cap === c ? 'on' : '')}
+        onClick={() => cap !== c && act(e => { if (!e.rounds.length && c >= new Set(e.active).size) e.maxPlayers = c; })}>{c}</button>)}</div>
+      {!cap && <div className="muted small">No limit set</div>}</div>}
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && openStart()}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
     {!me && full && <FullCard ev={ev} onPick={pick} />}

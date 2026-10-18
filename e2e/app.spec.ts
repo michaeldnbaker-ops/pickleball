@@ -723,3 +723,56 @@ test('Start step: pick courts for a game created before the picker (no courtSet)
   const r = await page.request.put(API + '/e/' + code, { data: { data: { ...ev, courtSet: [1, 2] } } }); expect(r.status()).toBe(409);
   expect((await page.request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true, hidden: true } } })).ok()).toBe(true);
 });
+
+const day2 = () => { const t = new Date(Date.now() + 26 * 3600e3); return new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00'; };
+const lobbyGame = (code: string, n: number, max: number, courts = 2) => { const players = Array.from({ length: n }, (_, i) => ({ id: code + 'p' + i, name: 'M' + i + '-' + code }));
+  return { id: code, name: 'Max test ' + code, date: day2(), place: 'Stone Creek', format: 'rotating', courts, totalRounds: 3, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), maxPlayers: max, hidden: true }; };
+
+test('max players is a ceiling: max 16 starts with 8, max 12 starts with 4, max 16 starts with 12', async ({ page, request }) => {
+  const code = 'MC' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  expect((await request.put(API + '/e/' + code, { data: { data: lobbyGame(code, 8, 16) } })).ok()).toBe(true);
+  page.on('dialog', d => d.accept()); await page.addInitScript(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code); await expect(page.getByText('8 joined')).toBeVisible(); await expect(page.getByText('16 max')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible(); await expect(page.locator('.match')).toHaveCount(2);
+  await page.screenshot({ path: 'e2e/shot-max16-start8.png' });
+  const ev = (await (await request.get(API + '/e/' + code)).json()).data; expect(ev.rounds).toHaveLength(1); expect(ev.active).toHaveLength(8); expect(ev.maxPlayers).toBe(16);
+  await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true } } });
+  // API: start writes under the ceiling are accepted
+  for (const [n, max] of [[4, 12], [12, 16], [4, 4]]) {
+    const c = 'MC' + Math.random().toString(36).slice(2, 6).toUpperCase(); const g = lobbyGame(c, n, max, 3); expect((await request.put(API + '/e/' + c, { data: { data: g } })).ok()).toBe(true);
+    const ids = g.active; const rounds = [{ n: 1, matches: Array.from({ length: Math.min(3, n / 4) }, (_, k) => ({ court: k + 1, a: [ids[4 * k], ids[4 * k + 1]], b: [ids[4 * k + 2], ids[4 * k + 3]] })), byes: ids.slice(Math.min(3, n / 4) * 4) }];
+    const r = await request.put(API + '/e/' + c + '?by=organizer&org=1', { data: { data: { ...g, rounds, startedAt: 1, startedBy: 'organizer', host: 'organizer' } } }); expect(r.ok(), `start ${n} under max ${max}`).toBe(true);
+    await request.put(API + '/e/' + c + '?by=organizer&org=1', { data: { data: { ...g, rounds, startedAt: 1, startedBy: 'organizer', host: 'organizer', finished: true } } });
+  }
+});
+
+test('creator changes max before start (never below sign-ups, no one lost); others cannot; locked after start', async ({ page, browser, request }) => {
+  const code = 'MX' + Math.random().toString(36).slice(2, 6).toUpperCase(); const g = lobbyGame(code, 6, 8);
+  expect((await request.put(API + '/e/' + code, { data: { data: g } })).ok()).toBe(true);
+  page.on('dialog', d => d.accept()); await page.addInitScript(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code);
+  const grp = page.getByRole('radiogroup', { name: /Max players/ });
+  await expect(grp.getByRole('radio', { name: '8' })).toHaveAttribute('aria-checked', 'true'); await expect(grp.getByRole('radio', { name: '4' })).toBeDisabled();
+  await grp.getByRole('radio', { name: '12' }).click(); await expect(grp.getByRole('radio', { name: '12' })).toHaveAttribute('aria-checked', 'true'); await expect(page.getByText('12 max')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-lobby-change-max.png', fullPage: true });
+  let ev = (await (await request.get(API + '/e/' + code)).json()).data; expect(ev.maxPlayers).toBe(12); expect(ev.players).toEqual(g.players); expect(ev.active).toEqual(g.active);
+  // API: below sign-ups refused; non-creator change ignored
+  const low = await request.put(API + '/e/' + code + '?org=1', { data: { data: { ...ev, maxPlayers: 4 } } }); expect(low.status()).toBe(409); expect((await low.json()).error).toBe('max below players');
+  await request.put(API + '/e/' + code, { data: { data: { ...ev, maxPlayers: 16 } } }); expect((await (await request.get(API + '/e/' + code)).json()).data.maxPlayers).toBe(12);
+  // a player's phone sees no max picker
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p = await ctx.newPage(); await p.goto(BASE + '#/e/' + code);
+  await expect(p.getByText('12 max')).toBeVisible(); await expect(p.getByRole('radiogroup', { name: /Max players/ })).toHaveCount(0); await ctx.close();
+  // lower back to 8 (2 more join → 8 = full), then start; after start the cap is locked
+  await grp.getByRole('radio', { name: '8' }).click(); await expect(page.getByText('8 max')).toBeVisible();
+  ev = (await (await request.get(API + '/e/' + code)).json()).data; expect(ev.maxPlayers).toBe(8);
+  const more = [{ id: code + 'x1', name: 'X1' }, { id: code + 'x2', name: 'X2' }];
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...ev, players: [...ev.players, ...more], active: [...ev.active, ...more.map(m => m.id)] } } })).ok()).toBe(true);
+  await page.reload(); await expect(page.getByText('8 joined')).toBeVisible();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  ev = (await (await request.get(API + '/e/' + code)).json()).data;
+  await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, maxPlayers: 16 } } }); expect((await (await request.get(API + '/e/' + code)).json()).data.maxPlayers).toBe(8);
+  await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true } } });
+});
