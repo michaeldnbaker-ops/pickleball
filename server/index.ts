@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { closeEvent } from './close';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'content-type': 'application/json' };
@@ -45,6 +46,16 @@ function ctLocal(ms: number) {
 async function purgeStale() {
   const today = ctLocal(Date.now()).slice(0, 10);
   await pool.query(`delete from events where jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))=0 and coalesce(data->>'date','') ~ '^\\d{4}-\\d{2}-\\d{2}' and substr(data->>'date',1,10) < $1`, [today]).catch(() => {});
+  // Auto-close: a game that started but was never ended is completed the day after its date, exactly like End early. Small batches keep requests fast.
+  try {
+    const { rows } = await pool.query(`select code, data, version from events where jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))>0 and coalesce((data->>'finished')::boolean,false)=false
+      and coalesce(data->>'date','') ~ '^\\d{4}-\\d{2}-\\d{2}' and substr(data->>'date',1,10) < $1 order by data->>'date' limit 25`, [today]);
+    for (const r of rows) {
+      const ev = closeEvent(r.data as Ev);
+      const u = await pool.query("update events set data=$2, version=version+1, updated_at=now() where code=$1 and version=$3 and coalesce((data->>'finished')::boolean,false)=false", [r.code, JSON.stringify(ev), r.version]);
+      if (u.rowCount) await syncStats(r.code, ev).catch(() => {});
+    }
+  } catch { /* retried on the next request */ }
 }
 export default {
   async fetch(req: Request) {

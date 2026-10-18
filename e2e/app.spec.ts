@@ -549,3 +549,20 @@ test('API: creator phone that also joined as a player can End a game started as 
   expect((await request.put(API + '/e/' + code + '?by=e0&org=1', { data: { data: { ...base, rounds, startedAt: 1, startedBy: 'organizer', finished: true } } })).ok()).toBe(true);
   expect((await (await request.get(API + '/e/' + code)).json()).data.finished).toBe(true);
 });
+
+test('API: started-but-not-ended games auto-close the day after their date (like End early); completed and current games untouched', async ({ request }) => {
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const old = 'AC' + tag, cur = 'AD' + tag;
+  const players = ['A', 'B', 'C', 'D'].map((n, i) => ({ id: 'c' + i, name: n + tag }));
+  const m = (sa?: number, sb?: number) => ({ court: 1, a: ['c0', 'c1'], b: ['c2', 'c3'], sa, sb });
+  const base = { name: 'Autoclose test', place: 'x', format: 'rotating', courts: 1, totalRounds: 4, balanceDupr: false, seeding: 'random', teams: [], hidden: true, players, active: players.map(p => p.id), startedAt: 1, startedBy: 'organizer' };
+  const t = new Date(Date.now() + 2 * 3600e3); const today = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+  expect((await request.put(API + '/e/' + old, { data: { data: { ...base, id: old, date: new Date(Date.now() - 30 * 3600e3).toISOString().slice(0, 10) + 'T09:00', rounds: [{ n: 1, matches: [m(11, 2)], byes: [] }], plan: [{ n: 2, matches: [m(11, 9)], byes: [] }, { n: 3, matches: [m()], byes: [] }] } } })).ok()).toBe(true);
+  expect((await request.put(API + '/e/' + cur, { data: { data: { ...base, id: cur, date: today, rounds: [{ n: 1, matches: [m()], byes: [] }] } } })).ok()).toBe(true);
+  let d: { finished?: boolean; rounds: { n: number }[]; plan?: unknown } = { rounds: [] };
+  await expect.poll(async () => { d = (await (await request.get(API + '/e/' + old)).json()).data; return !!d.finished; }, { timeout: 120000 }).toBe(true);
+  expect(d.rounds.map(r => r.n)).toEqual([1, 2]); expect(d.plan).toBeUndefined();
+  expect((await (await request.get(API + '/past?test=1')).json()).events.some((e: { code: string }) => e.code === old)).toBe(true);
+  expect(((await (await request.get(API + '/stats/player?test=1&name=' + encodeURIComponent('A' + tag))).json()).matches)).toHaveLength(2);
+  const c = (await (await request.get(API + '/e/' + cur)).json()).data; expect(c.finished).toBeFalsy(); expect(c.rounds).toHaveLength(1);
+  await request.put(API + '/e/' + cur + '?by=organizer', { data: { data: { ...c, finished: true } } });
+});
