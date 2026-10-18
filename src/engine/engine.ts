@@ -9,6 +9,7 @@ export interface EventT {
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
   rounds: Round[]; createdAt: number; finished?: boolean; hidden?: boolean;
+  courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
@@ -212,13 +213,25 @@ export function nextPlayoffRound(ev: EventT): Round | null {
 /** Courts in a round that have no valid (non-tied) score yet. */
 /** Display-only court label: 1→A, 2→B … 26→Z, 27→AA. Stored court numbers are unchanged. */
 export function courtName(n: number): string { let s = ''; for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + (x - 1) % 26) + s; return s || String(n); }
+/** The picked courts, or A, B, C… (1..courts) for older games / invalid data. */
+export function courtList(ev: Pick<EventT, 'courts' | 'courtSet'>): number[] {
+  const cs = ev.courtSet; const ok = Array.isArray(cs) && cs.length === ev.courts && cs.every((x, i) => Number.isInteger(x) && x > 0 && (i === 0 || x > cs[i - 1]));
+  return ok ? cs!.slice() : Array.from({ length: ev.courts }, (_, i) => i + 1);
+}
+/** Label for a match's court slot (1..courts): the picked letter, e.g. slots 1,2,3 → A, B, D. Pairing logic still uses slots (slot 1 = top court). */
+export function courtLabel(ev: Pick<EventT, 'courts' | 'courtSet'>, slot: number): string { return courtName(courtList(ev)[slot - 1] ?? slot); }
+/** "A–C" for a run from A, else "A, B, D". */
+export function courtsText(ev: Pick<EventT, 'courts' | 'courtSet'>): string {
+  const l = courtList(ev); if (l.every((x, i) => x === i + 1)) return l.length > 1 ? 'A–' + courtName(l.length) : 'A';
+  return l.map(courtName).join(', ');
+}
 export function unscoredCourts(r: Round | undefined): number[] { return r ? r.matches.filter(m => !scored(m)).map(m => m.court) : []; }
 export function canRegenerate(ev: EventT) { const r = ev.rounds[ev.rounds.length - 1]; return !!r && !r.playoff && !r.matches.some(m => m.sa != null || m.sb != null); }
 
 export function toCSV(ev: EventT) {
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || id;
   const rows = [['Round', 'Court', 'Team A', 'Team B', 'Score A', 'Score B']];
-  for (const r of ev.rounds) for (const m of r.matches) rows.push([String(r.playoff ? 'Playoff ' + r.n : r.n), courtName(m.court), m.a.map(nm).join(' & '), m.b.map(nm).join(' & '), String(m.sa ?? ''), String(m.sb ?? '')]);
+  for (const r of ev.rounds) for (const m of r.matches) rows.push([String(r.playoff ? 'Playoff ' + r.n : r.n), courtLabel(ev, m.court), m.a.map(nm).join(' & '), m.b.map(nm).join(' & '), String(m.sa ?? ''), String(m.sb ?? '')]);
   return rows.map(r => r.map(x => '"' + x.replace(/"/g, '""') + '"').join(',')).join('\n');
 }
 

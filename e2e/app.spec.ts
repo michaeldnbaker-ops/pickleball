@@ -58,7 +58,7 @@ test('KOTC and playoffs reach a champion', async ({ page }) => {
   await page.getByText('Next: Players').click();
   for (let i = 1; i <= 8; i++) { await page.getByPlaceholder('Name').fill('K' + i); await page.getByText('Add new player').click(); }
   await page.getByRole('button', { name: 'Next ›' }).click();
-  for (let i = 0; i < 7; i++) await page.locator('.stepper').nth(1).getByText('−').click();
+  for (let i = 0; i < 7; i++) await page.locator('.stepper').first().getByText('−').click();
   await startGame(page);
   const scoreAll = async () => { await expect(page.locator('.match').first()).toBeVisible(); const n = await page.locator('.match').count(); for (let c = 0; c < n; c++) { const card = page.locator('.match').nth(c); await card.locator('.scorebox input').first().fill('11'); await card.locator('.scorebox input').nth(1).fill('4'); await card.getByText('Save').click(); await expect(card.locator('.final')).toBeVisible(); } };
   await scoreAll(); await expect(page.getByText("That's the last round.")).toBeVisible(); await page.getByText('Start playoffs ›').click();
@@ -107,8 +107,8 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   const names = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kai', 'Lu'];
   for (const n of names) { await page.getByLabel('Player name').fill(n); await page.getByText('Add new player').click(); }
   await page.getByRole('button', { name: 'Next ›' }).click();
-  await page.locator('.stepper').first().getByText('−').click(); // 2 courts → 4 rotate out each round
-  for (let i = 0; i < 2; i++) await page.locator('.stepper').nth(1).getByText('−').click(); // 6 rounds
+  await page.locator('.courtChip.on').last().click(); // 2 courts → 4 rotate out each round
+  for (let i = 0; i < 2; i++) await page.locator('.stepper').first().getByText('−').click(); // 6 rounds
   await startGame(page);
   await expect(page.getByRole('heading', { name: 'Round 1 of 6' })).toBeVisible();
   await expect(page.locator('.strip .dot')).toHaveCount(6);
@@ -159,8 +159,8 @@ const setup = async (page: import('@playwright/test').Page, names: string[], cou
   await page.goto(BASE + '#/new'); await page.getByLabel('Place').fill('Gym'); await page.getByText('Next: Players').click();
   for (const n of names) { await page.getByLabel('Player name').fill(n); await page.getByText('Add new player').click(); }
   await page.getByRole('button', { name: 'Next ›' }).click();
-  for (let i = 0; i < courtsMinus; i++) await page.locator('.stepper').first().getByText('−').click();
-  for (let i = 0; i < 8 - rounds; i++) await page.locator('.stepper').nth(1).getByText('−').click();
+  for (let i = 0; i < courtsMinus; i++) await page.locator('.courtChip.on').last().click();
+  for (let i = 0; i < 8 - rounds; i++) await page.locator('.stepper').first().getByText('−').click();
   await startGame(page);
   await expect(page.getByRole('heading', { name: new RegExp('Round 1 of ' + rounds) })).toBeVisible();
 };
@@ -218,8 +218,8 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Lobby ' + tag); await page.getByLabel('Place').fill('Stone Creek');
   await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click();
   await page.getByRole('radio', { name: '16' }).click(); // max players 16 (default is 8)
-  await page.locator('.stepper').first().getByText('−').click(); // 2 courts
-  for (let i = 0; i < 6; i++) await page.locator('.stepper').nth(1).getByText('−').click(); // 2 rounds
+  await page.locator('.courtChip.on').last().click(); // 2 courts
+  for (let i = 0; i < 6; i++) await page.locator('.stepper').first().getByText('−').click(); // 2 rounds
   await page.getByRole('button', { name: 'Create game' }).click();
   await expect(page.getByText('Signing up')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
   // players sign up by name from the Join list
@@ -637,4 +637,89 @@ test('API: older games without a cap are never full', async ({ request }) => {
   expect((await request.put(API + '/e/' + code, { data: { data: ev(17) } })).ok()).toBe(true);
   const l = (await (await request.get(API + '/events?test=1&from=2000-01-01T00:00')).json()).events.find((e: { code: string }) => e.code === code); expect(l.max).toBeNull();
   expect((await request.delete(API + '/e/' + code)).ok()).toBe(true);
+});
+
+test('pick courts by letter (A, B, D): pairings use only those courts, labeled A/B/D; locked after start', async ({ page }) => {
+  test.setTimeout(120000);
+  const tag = Math.random().toString(36).slice(2, 6);
+  page.on('dialog', d => d.accept());
+  await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Courts test ' + tag); await page.getByLabel('Place').fill('Stone Creek');
+  await page.getByText('Next: Players').click();
+  for (let i = 1; i <= 16; i++) { await page.getByLabel('Player name').fill('C' + i + '-' + tag); await page.getByText('Add new player').click(); }
+  await page.getByRole('button', { name: 'Next ›' }).click();
+  // default A, B, C selected; chips A…H plus More…; max-players picker still there
+  await expect(page.getByRole('radiogroup', { name: 'Max players' })).toBeVisible();
+  const chip = (l: string) => page.getByRole('button', { name: 'Court ' + l, exact: true });
+  for (const l of ['A', 'B', 'C']) await expect(chip(l)).toHaveAttribute('aria-pressed', 'true');
+  await expect(chip('D')).toHaveAttribute('aria-pressed', 'false'); await expect(chip('H')).toBeVisible(); await expect(chip('I')).toHaveCount(0);
+  await page.getByRole('button', { name: 'More…' }).click(); await expect(chip('Z')).toBeVisible();
+  await chip('C').click(); await chip('D').click();
+  await expect(page.locator('.courtRange')).toHaveText('3 courts: A, B, D');
+  await page.locator('.courtRange').scrollIntoViewIfNeeded(); await page.screenshot({ path: 'e2e/shot-create-court-chips.png' });
+  await page.getByRole('button', { name: 'Create game' }).click();
+  await expect(page.getByText('3 courts (A, B, D)')).toBeVisible();
+  const code = page.url().split('/e/')[1].split('/')[0];
+  const ev0 = (await (await page.request.get(API + '/e/' + code)).json()).data; expect(ev0.courtSet).toEqual([1, 2, 4]); expect(ev0.courts).toBe(3);
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  // Start step is pre-filled with the create-time pick
+  const sheet = page.getByRole('alertdialog'); for (const l of ['A', 'B', 'D']) await expect(sheet.getByRole('button', { name: 'Court ' + l, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(sheet.getByRole('button', { name: 'Court C', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(sheet.locator('.startCourts')).toHaveText('3 games per round on Courts A, B, D · 4 sit out each round');
+  await sheet.getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  await expect(page.locator('.match')).toHaveCount(3);
+  await expect(page.locator('.match .court')).toHaveText(['Court A', 'Court B', 'Court D']);
+  await expect(page.locator('.byeNames')).toBeVisible(); // 16 players on 3 courts → 4 sit out
+  await page.screenshot({ path: 'e2e/shot-courts-abd.png', fullPage: true });
+  // next round still A, B, D
+  for (let i = 0; i < 3; i++) { const m = page.locator('.match').nth(i); await m.getByLabel('Team A score').fill('11'); await m.getByLabel('Team B score').fill(String(i + 3)); await m.getByRole('button', { name: 'Save score' }).click(); await expect(m.locator('.final')).toBeVisible(); }
+  await page.getByRole('button', { name: /Next: Round 2/ }).click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
+  await expect(page.locator('.match .court')).toHaveText(['Court A', 'Court B', 'Court D']);
+  await page.getByRole('button', { name: /Manage/ }).click(); await expect(page.getByText('3 courts (A, B, D)')).toBeVisible();
+  // locked after start: API refuses a change of picked courts
+  const cur = (await (await page.request.get(API + '/e/' + code)).json()).data;
+  const r = await page.request.put(API + '/e/' + code, { data: { data: { ...cur, courtSet: [1, 2, 3] } } }); expect(r.status()).toBe(409); expect((await r.json()).field).toBe('courtSet');
+  expect((await page.request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...cur, finished: true, hidden: true } } })).ok()).toBe(true);
+});
+
+test('API: malformed picked courts are dropped (game falls back to A, B, C…)', async ({ request }) => {
+  const code = 'CS' + Math.random().toString(36).slice(2, 6).toUpperCase(); const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const base = { id: code, name: 'e2e courtset ' + code, date: d, place: 'x', format: 'rotating', courts: 2, totalRounds: 1, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: 1, hidden: true };
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, courtSet: [4, 1, 2] } } })).ok()).toBe(true);
+  expect((await (await request.get(API + '/e/' + code)).json()).data.courtSet).toBeUndefined();
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, courtSet: [2, 4] } } })).ok()).toBe(true);
+  expect((await (await request.get(API + '/e/' + code)).json()).data.courtSet).toEqual([2, 4]);
+  expect((await request.delete(API + '/e/' + code)).ok()).toBe(true);
+});
+
+test('Start step: pick courts for a game created before the picker (no courtSet); existing sign-ups kept', async ({ page }) => {
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const code = 'SC' + tag;
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '17:00';
+  const players = Array.from({ length: 8 }, (_, i) => ({ id: 's' + i, name: 'S' + i + '-' + tag }));
+  // same shape as a game made before court letters existed: courts 2, no courtSet, max 8
+  const legacy = { id: code, name: 'Start courts test ' + tag, date: d, place: 'Stone Creek', format: 'rotating', courts: 2, totalRounds: 4, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), maxPlayers: 8, hidden: true };
+  expect((await page.request.put(API + '/e/' + code, { data: { data: legacy } })).ok()).toBe(true);
+  // listing and lobby unchanged before the start
+  const pre = (await (await page.request.get(API + '/e/' + code)).json()).data; expect(pre.courtSet).toBeUndefined(); expect(pre.active).toHaveLength(8);
+  await page.addInitScript(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code); await expect(page.getByText('2 courts (A–B)')).toBeVisible();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  const sheet = page.getByRole('alertdialog');
+  await expect(sheet.getByRole('button', { name: 'Court A', exact: true })).toHaveAttribute('aria-pressed', 'true'); await expect(sheet.getByRole('button', { name: 'Court B', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(sheet.locator('.startCourts')).toHaveText('2 games per round on Courts A–B');
+  // pick B and D instead; can't deselect the last one
+  await sheet.getByRole('button', { name: 'Court A', exact: true }).click(); await sheet.getByRole('button', { name: 'Court D', exact: true }).click();
+  await expect(sheet.locator('.startCourts')).toHaveText('2 games per round on Courts B, D');
+  await sheet.getByRole('button', { name: 'Court B', exact: true }).click(); await expect(sheet.locator('.startCourts')).toHaveText('1 game per round on Court D · 4 sit out each round');
+  await sheet.getByRole('button', { name: 'Court D', exact: true }).click(); await expect(sheet.getByRole('button', { name: 'Court D', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await sheet.getByRole('button', { name: 'Court B', exact: true }).click();
+  await page.screenshot({ path: 'e2e/shot-start-court-step.png' });
+  await sheet.getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  await expect(page.locator('.match .court')).toHaveText(['Court B', 'Court D']);
+  await page.screenshot({ path: 'e2e/shot-start-courts-bd.png' });
+  const ev = (await (await page.request.get(API + '/e/' + code)).json()).data;
+  expect(ev.courts).toBe(2); expect(ev.courtSet).toEqual([2, 4]); expect(ev.players).toEqual(players); expect(ev.active).toEqual(legacy.active); expect(ev.maxPlayers).toBe(8); expect(ev.date).toBe(d); expect(ev.name).toBe(legacy.name);
+  const r = await page.request.put(API + '/e/' + code, { data: { data: { ...ev, courtSet: [1, 2] } } }); expect(r.status()).toBe(409);
+  expect((await page.request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true, hidden: true } } })).ok()).toBe(true);
 });

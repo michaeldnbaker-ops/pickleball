@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { closeEvent } from './close';
-import { capOf, overCap } from './cap';
+import { capOf, overCap, validCourtSet } from './cap';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'content-type': 'application/json' };
@@ -14,7 +14,7 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
-interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
+interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -73,7 +73,7 @@ export default {
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds,
             case when data->>'maxPlayers' in ('4','8','12','16') then (data->>'maxPlayers')::int end as max
           from events where coalesce((data->>'finished')::boolean,false)=false and (coalesce((data->>'hidden')::boolean,false)=false or $2)
-            and data->>'date' >= $1 order by data->>'date' asc limit 50`, [from, test]);
+            and data->>'date' >= $1 order by data->>'date' asc limit $3`, [from, test, test ? 300 : 50]); // test mode sees more (hidden e2e games pile up)
         return j({ events: rows });
       }
       if (url.pathname === '/past' && req.method === 'GET') {
@@ -113,13 +113,15 @@ export default {
         const ids = (xs: unknown) => JSON.stringify([...new Set(((xs || []) as unknown[]).map(x => typeof x === 'string' ? x : (x as { id: string }).id))].sort());
         const started = !!cur && (cur.rounds || []).length > 0;
         // The player cap is set once on Create and can't be changed or removed later; older games without one stay uncapped.
+        // Picked courts (by letter) must match the court count; anything malformed is dropped so the game falls back to A, B, C….
+        if (body.data && 'courtSet' in body.data && !validCourtSet(body.data.courtSet, body.data.courts)) delete body.data.courtSet;
         if (cur && body.data) { if (capOf(cur)) body.data.maxPlayers = capOf(cur); else delete body.data.maxPlayers; }
         if (started && body.data) {
           // Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
           if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
-          for (const f of ['date', 'courts', 'format', 'seeding', 'balanceDupr', 'teams'] as const)
+          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
           // Roster is locked after the start: nobody added, dropped or re-added.
           if (ids(body.data.players) !== ids(cur.players)) return j({ error: 'started', field: 'players', data: cur }, 409);

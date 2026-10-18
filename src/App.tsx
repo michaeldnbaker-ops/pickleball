@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -37,7 +37,7 @@ const FORMATS: { id: Format; name: string; desc: string }[] = [
   { id: 'mixed', name: 'Mixed Doubles', desc: 'Organizer sets the pairs; pairs stay together and rotate opponents.' },
   { id: 'fixed', name: 'Set Partners RR', desc: 'Same partner all event, rotate opponents.' },
   { id: 'kotc', name: 'King of the Court', desc: 'Up & down the river: winners move up a court, losers down, partners split.' },
-  { id: 'ladder', name: 'Ladder', desc: 'Courts re-seeded by standings each round: best 4 on Court A.' },
+  { id: 'ladder', name: 'Ladder', desc: 'Courts re-seeded by standings each round: best 4 on the top court.' },
   { id: 'team', name: 'Team Battle (4-player teams)', desc: 'MLP-style: teams of 4 play two doubles games per tie.' },
 ];
 const fmtName = (f: Format) => (FORMATS.find(x => x.id === f) ?? FORMATS[0]).name; // legacy formats (e.g. old 'mixed') show as Round Robin
@@ -87,7 +87,6 @@ function Past() {
   </div>;
 }
 
-const courtRange = (n: number) => n > 1 ? 'A–' + courtName(n) : 'A';
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
 function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null }; onClick: () => void; join?: boolean }) {
   const w = fmtWhen(g.date); const started = (g.rounds ?? 0) > 0; const live = started && new Date(g.date) <= new Date();
@@ -184,7 +183,7 @@ function NewEvent() {
   const [date, setDate] = useState(localISO());
   const [place, setPlace] = useState(localStorage.getItem('pb:lastPlace') || '');
   const [format, setFormat] = useState<Format>('rotating');
-  const [courts, setCourts] = useState(3); const [rounds, setRounds] = useState(8);
+  const [courtSet, setCourtSet] = useState<number[]>([1, 2, 3]); const courts = courtSet.length; const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
   const [maxP, setMaxP] = useState(8);
@@ -196,7 +195,7 @@ function NewEvent() {
     setBusy(true); localStorage.setItem('pb:lastPlace', place);
     players.forEach(S.addToRoster);
     const code = S.newCode();
-    const ev: EventT = { id: code, name, date, place, format, courts, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.testMode() ? { hidden: true } : {}) };
+    const ev: EventT = { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.testMode() ? { hidden: true } : {}) };
     S.setOrg(code);
     S.saveLocal(code, ev, true);
     try { await S.pushRemote(code, ev); S.saveLocal(code, ev, false); } catch { /* will push later */ }
@@ -224,7 +223,7 @@ function NewEvent() {
       <label id="max-l">Max players</label>
       <div className="row maxRow" role="radiogroup" aria-labelledby="max-l">{CAPS.map(c => <button key={c} type="button" role="radio" aria-checked={maxP === c} disabled={c < players.length} className={'chip maxChip ' + (maxP === c ? 'on' : '')} onClick={() => setMaxP(c)}>{c}</button>)}</div>
       <p className="muted small">Join closes once {maxP} players have signed up; if someone drops out, the spot opens again.</p>
-      <label>Courts available</label><Stepper value={courts} min={1} max={30} onChange={setCourts} /><p className="muted small courtRange">Courts {courtRange(courts)}</p>
+      <CourtPicker value={courtSet} onChange={setCourtSet} />
       <p className="muted small">Games start with exactly 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras sit out in fair rotation. Partners don't repeat until they have to.</p>
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
@@ -232,6 +231,16 @@ function NewEvent() {
       <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>
       <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
+}
+
+/** Pick courts by letter (A–H, More… for up to Z). At least one stays selected. */
+function CourtPicker({ value, onChange, id = 'courts-l' }: { value: number[]; onChange: (v: number[]) => void; id?: string }) {
+  const [more, setMore] = useState(false); const hi = value[value.length - 1] ?? 0; const n = value.length;
+  return <><label id={id}>Courts</label>
+    <div className="chips courtChips" role="group" aria-labelledby={id}>{Array.from({ length: more || hi > 8 ? 26 : 8 }, (_, i) => i + 1).map(c => { const on = value.includes(c);
+      return <button key={c} type="button" aria-pressed={on} aria-label={'Court ' + courtName(c)} className={'chip courtChip ' + (on ? 'on' : '')} onClick={() => { if (on && n === 1) return; onChange(on ? value.filter(x => x !== c) : [...value, c].sort((a, b) => a - b)); }}>{courtName(c)}</button>; })}
+      {!more && hi <= 8 && <button type="button" className="chip ghost moreCourts" onClick={() => setMore(true)}>More…</button>}</div>
+    <p className="muted small courtRange">{n} court{n === 1 ? '' : 's'}: {courtsText({ courts: n, courtSet: value })}</p></>;
 }
 
 function Stepper({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (n: number) => void }) {
@@ -330,7 +339,7 @@ function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: stri
     {ev.finished && <div className="lockNote readOnly" role="note"><Icon n="lock" size={18} /> Match complete · scores are final (read-only)</div>}
     {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
       {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.</p>}
-      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
+      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
       {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(nm).join(' · ')}</div></div>}</>}
     {vi === curIdx && !ev.finished && !(lastReg) && canAdvance && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
     {vi === curIdx && !ev.finished && !canAdvance && !lastReg && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> Only {hostName(ev)} (who started the game) can finish it.</div>}
@@ -343,13 +352,13 @@ function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: stri
     {vi !== curIdx && <button className="big" onClick={() => setSel(curIdx)}>Back to current round</button>}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="unsc-t" onClick={e => e.stopPropagation()}>
       <h2 id="unsc-t"><Icon n="alert" size={22} /> {missing.length === 1 ? '1 court has' : missing.length + ' courts have'} no score</h2>
-      <p>Court {missing.map(courtName).join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
+      <p>Court {missing.map(n => courtLabel(ev, n)).join(', ')} {missing.length === 1 ? "hasn't" : "haven't"} been scored. If you continue, {missing.length === 1 ? 'that game' : 'those games'} won't count in the standings.</p>
       <button className="big primary" onClick={() => setAsk(false)}>Go back and enter scores</button>
       <button className="big danger" onClick={() => { setAsk(false); advance(); }}>Continue anyway</button></div></div>}
   </div>;
 }
 
-function CourtCard({ m, nm, onScore, me, label, compact, onName }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; onName?: (id: string) => void }) {
+function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; onName?: (id: string) => void; cn?: (n: number) => string }) {
   const [a, setA] = useState<number | ''>(m.sa ?? ''); const [b, setB] = useState<number | ''>(m.sb ?? '');
   useEffect(() => { setA(m.sa ?? ''); setB(m.sb ?? ''); }, [m.sa, m.sb]);
   const [edit, setEdit] = useState(false);
@@ -361,7 +370,7 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName }: { m: Match; n
     {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
   </div>;
   return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
-    <div className="courtHead"><span className="court">{label ?? 'Court ' + courtName(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
+    <div className="courtHead"><span className="court">{label ?? 'Court ' + cn(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
     {side(m.a, a, setA, m.sa, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, has && !winA, 'B')}
     {onScore && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
       : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
@@ -390,20 +399,20 @@ function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => st
     <div className="row between"><h2>Hi, {nm(me)}</h2><button className="ghost small" onClick={() => pick('')}>Not you?</button></div>
     <div className="card next">{ev.finished ? <b>Event finished</b> : cur?.m ? <>
       <div className="muted">{scored(cur.m) ? 'Your latest game' : 'Your game now'} · {roundLabel(ev, cur.i)}</div>
-      <div className="bigcourt">Court {courtName(cur.m.court)}</div>
+      <div className="bigcourt">Court {courtLabel(ev, cur.m.court)}</div>
       <div>Partner: <b>{partner(cur.m).map(nm).join(', ') || '—'}</b></div>
       <div>vs <b>{opps(cur.m).map(nm).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
     <h2>Your games</h2>
-    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + courtName(m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
-    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + courtName(m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
+    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
+    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
 
 function Schedule({ ev, nm, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
   return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
     {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(nm).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
@@ -436,7 +445,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
     <div className="card locked"><div className="muted small">Day &amp; time</div><div className="lockedVal">{fmtWhen(ev.date).day} {fmtWhen(ev.date).date} · {fmtWhen(ev.date).time}</div>
-      <div className="muted small">Courts · Format</div><div className="lockedVal">{ev.courts} court{ev.courts === 1 ? '' : 's'} ({courtRange(ev.courts)}) · {fmtName(ev.format)}{ev.balanceDupr ? ' · DUPR balanced' : ''}</div>
+      <div className="muted small">Courts · Format</div><div className="lockedVal">{ev.courts} court{ev.courts === 1 ? '' : 's'} ({courtsText(ev)}) · {fmtName(ev.format)}{ev.balanceDupr ? ' · DUPR balanced' : ''}</div>
       {unit > 1 && <><div className="muted small">{unit === 2 ? 'Pairs' : 'Teams'}</div><div className="lockedVal">{ev.teams.filter(t => t.length === unit).map(t => t.map(id => ev.players.find(p => p.id === id)?.name || '?').join(' & ')).join(' · ')}</div></>}</div>
     {host ? <><label>Total rounds</label><Stepper value={ev.totalRounds} min={Math.max(1, ev.rounds.filter(r => !r.playoff).length)} max={60} onChange={n => act(e => { e.totalRounds = n; e.finished = false; })} />
       {!ev.finished && <button className="big danger" onClick={() => confirm('End the event now? Standings are final; unplayed rounds are dropped.') && act(e => endEvent(e))}><Icon n="flag" /> End early</button>}
@@ -450,9 +459,11 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
 
 function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; act: Act; refresh: () => void; loading: boolean }) {
   const [me, setMeS] = useState(S.getMe(code)); const [ask, setAsk] = useState(false); const [starting, setStarting] = useState(false);
-  const start = () => { setAsk(false); if (starting) return; setStarting(true); const stamp = Date.now();
+  const [pickC, setPickC] = useState<number[]>([]);
+  const openStart = () => { setPickC(courtList(ev)); setAsk(true); };
+  const start = () => { const cs = pickC.length ? pickC : courtList(ev); setAsk(false); if (starting) return; setStarting(true); const stamp = Date.now();
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
-    act(e => { if (e.rounds.length || !startOk(e.active.length)) return; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
+    act(e => { if (e.rounds.length || !startOk(e.active.length)) return; e.courts = cs.length; e.courtSet = cs; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
   // This phone forgets a name that was removed (by the creator) or dropped elsewhere, so it can join again.
@@ -470,9 +481,9 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   return <div className="page">
     <header><button className="ghost" onClick={() => go('')} aria-label="Back">‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
-    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtRange(ev.courts)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
+    <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtsText(ev)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> {full ? 'Full' : 'Signing up'} · <b>{joined.length} joined</b>{cap ? <span className="muted"> · {cap} max</span> : null}</div>
-    {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && setAsk(true)}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
+    {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && openStart()}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">Need 4, 8, 12 or 16 players to start (have {joined.length})</p>}
     {!me && full && <FullCard ev={ev} onPick={pick} />}
     {!me && !full && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }).then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) pick(p.id); else if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
@@ -488,7 +499,9 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     {ask && <div className="sheetBg" onClick={() => setAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="st-t" onClick={e => e.stopPropagation()}>
       <h2 id="st-t">Start with {joined.length} player{joined.length === 1 ? '' : 's'}?</h2>
-      <p>The whole schedule is drawn now from everyone who has joined{joined.length % 4 ? ` — with ${joined.length} players, sit-outs rotate evenly` : ''}. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
+      <CourtPicker id="start-courts-l" value={pickC} onChange={setPickC} />
+      {(() => { const out = Math.max(0, joined.length - Math.min(pickC.length, Math.floor(joined.length / 4)) * 4); return <p className="startCourts" role="status">{Math.min(pickC.length, Math.floor(joined.length / 4))} game{Math.min(pickC.length, Math.floor(joined.length / 4)) === 1 ? '' : 's'} per round on Court{pickC.length === 1 ? '' : 's'} {courtsText({ courts: pickC.length, courtSet: pickC })}{out ? ` · ${out} sit out each round` : ''}</p>; })()}
+      <p>The whole schedule is drawn now from everyone who has joined{joined.length % 4 ? ` — with ${joined.length} players, sit-outs rotate evenly` : ''}. Courts are locked once you start. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
       <button className="big primary" disabled={starting || !ok} onClick={start}>Start game</button>
       <button className="big" onClick={() => setAsk(false)}>Keep waiting</button></div></div>}
   </div>;

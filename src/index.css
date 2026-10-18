@@ -159,3 +159,5 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .joinPill.pillFull{background:var(--card2);color:var(--fg);border:1px solid var(--line)}.joinPill.pillOpen{background:#3E7F1A}
 .maxRow{gap:8px;flex-wrap:wrap}.maxChip{min-width:64px;text-align:center;font-weight:800}.maxChip:disabled{opacity:.4}
 .fullCard h2{margin-top:0}
+.courtChips{gap:8px}.courtChip{min-width:48px;text-align:center;font-weight:800}.moreCourts{border-style:dashed}
+.startCourts{font-weight:700;color:var(--skyText);margin:6px 0}
