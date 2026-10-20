@@ -1085,3 +1085,9 @@ test('Clubs: pick/add club at Create (saved for everyone, case-insensitive), sta
   await page.getByLabel('Club').selectOption('Stone Creek'); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toHaveCount(0);
   console.log('CLUBSCODE ' + code);
 });
+
+test('Test cleanup endpoint: admin key + test mode only', async ({ request }) => {
+  expect((await request.post(API + '/test/cleanup?test=1')).status()).toBe(403);
+  expect((await request.post(API + '/test/cleanup?test=1', { headers: { 'x-admin': 'not-the-key-0000000000' } })).status()).toBe(403);
+  if (process.env.ADMIN_KEY) expect((await request.post(API + '/test/cleanup', { headers: { 'x-admin': process.env.ADMIN_KEY } })).status()).toBe(403); // not without test mode
+});

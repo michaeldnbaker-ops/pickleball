@@ -3,7 +3,7 @@ import { closeEvent } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
-const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
+const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
 const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: H });
 
 let ready: Promise<unknown> | null = null;
@@ -189,6 +189,23 @@ export default {
         const ins = await pool.query('insert into player_icons(k,icon,photo,owner,hidden) values($1,$2,$3,$4,$5) on conflict do nothing', [k, icon, b.photo || null, await sha(token), test]);
         if (!ins.rowCount) return j({ error: 'not owner' }, 403);
         return j({ ok: true, token });
+      }
+      if (url.pathname === '/test/cleanup' && req.method === 'POST') {
+        // Test cleanup (admin key only): deletes ONLY rows flagged hidden (test mode / e2e). Real (unhidden) games, stats, trophies, icons and clubs are never touched.
+        await ensureStats(); if (!test || !(await isAdmin(req))) return j({ error: 'admin only' }, 403);
+        const c = await pool.connect(); const n: Record<string, number> = {};
+        try {
+          await c.query('begin');
+          const ev = await c.query("select code from events where coalesce((data->>'hidden')::boolean,false) = true");
+          const codes = ev.rows.map(r => r.code as string);
+          n.stats = (await c.query('delete from stat_matches where hidden = true')).rowCount || 0;
+          n.trophies = (await c.query('delete from trophies where hidden = true')).rowCount || 0;
+          n.icons = (await c.query('delete from player_icons where hidden = true')).rowCount || 0;
+          n.clubs = (await c.query('delete from clubs where hidden = true')).rowCount || 0;
+          n.games = (await c.query("delete from events where code = any($1::text[]) and coalesce((data->>'hidden')::boolean,false) = true", [codes])).rowCount || 0;
+          await c.query('commit');
+        } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
+        return j({ ok: true, deleted: n });
       }
       if (url.pathname === '/admin' && req.method === 'GET') { await ensureStats(); return j({ admin: await isAdmin(req) }); }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);
