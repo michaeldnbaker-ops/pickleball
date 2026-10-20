@@ -10,11 +10,13 @@ let ready: Promise<unknown> | null = null;
 const ensureStats = () => ready ??= pool.query(`create table if not exists stat_matches(
   id text primary key, code text not null, ev_name text, date text, hidden boolean not null default false,
   ak text[] not null, bk text[] not null, an text[] not null, bn text[] not null, sa int not null, sb int not null, updated_at timestamptz not null default now());
-  create index if not exists stat_matches_code on stat_matches(code);`).catch(e => { ready = null; throw e; });
+  create index if not exists stat_matches_code on stat_matches(code);
+  alter table stat_matches add column if not exists excl text[] not null default '{}';`).catch(e => { ready = null; throw e; });
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
-interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[] }
+interface X { slot: string; from: number; name: string | null }
+interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -24,19 +26,31 @@ async function syncStats(code: string, ev: Ev) {
     const tag = r.playoff ? 'p' + (++po) : 'r' + r.n;
     for (const m of r.matches || []) {
       if (m.sa == null || m.sb == null || m.sa === m.sb) continue;
-      const an = m.a.map(id => name.get(id) || '?'), bn = m.b.map(id => name.get(id) || '?');
-      rows.push([`${code}:${tag}:${m.court}`, code, ev.name || '', ev.date || '', !!ev.hidden, an.map(x => x.toLowerCase()), bn.map(x => x.toLowerCase()), an, bn, m.sa, m.sb]);
+      // Subs: from their round on, a slot's results are credited to the sub; an unnamed Guest is kept out of Overall stats (excl).
+      const rn = r.playoff ? 10000 + r.n : r.n; const who = (id: string) => subName(ev.subs, id, rn) ?? (name.get(id) || '?');
+      const an = m.a.map(who), bn = m.b.map(who);
+      const excl = [...an, ...bn].filter(x => /^guest$/i.test(x.trim())).map(x => x.toLowerCase());
+      rows.push([`${code}:${tag}:${m.court}`, code, ev.name || '', ev.date || '', !!ev.hidden, an.map(x => x.toLowerCase()), bn.map(x => x.toLowerCase()), an, bn, m.sa, m.sb, excl]);
     }
   }
   const ids = rows.map(r => r[0] as string);
   await pool.query('delete from stat_matches where code=$1 and not (id = any($2::text[]))', [code, ids]);
-  for (const r of rows) await pool.query(`insert into stat_matches(id,code,ev_name,date,hidden,ak,bk,an,bn,sa,sb) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-    on conflict(id) do update set ev_name=excluded.ev_name, date=excluded.date, hidden=excluded.hidden, ak=excluded.ak, bk=excluded.bk, an=excluded.an, bn=excluded.bn, sa=excluded.sa, sb=excluded.sb, updated_at=now()`, r);
+  for (const r of rows) await pool.query(`insert into stat_matches(id,code,ev_name,date,hidden,ak,bk,an,bn,sa,sb,excl) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    on conflict(id) do update set ev_name=excluded.ev_name, date=excluded.date, hidden=excluded.hidden, ak=excluded.ak, bk=excluded.bk, an=excluded.an, bn=excluded.bn, sa=excluded.sa, sb=excluded.sb, excl=excluded.excl, updated_at=now()`, r);
+}
+function subName(subs: X[] | undefined, slot: string, n: number): string | null {
+  let cur: X | undefined; for (const x of subs || []) if (x.slot === slot && x.from <= n && (!cur || x.from >= cur.from)) cur = x;
+  return cur ? (cur.name?.trim() || null) : null;
+}
+/** Subs: up to 200 entries, each a player in the game, a round ≥ 1, and a name (≤ 40 chars) or null (original back in). */
+function validSubs(xs: unknown, ids: Set<string>) {
+  return xs === undefined || (Array.isArray(xs) && xs.length <= 200 && xs.every(x => x && typeof x === 'object' && ids.has((x as X).slot) && Number.isInteger((x as X).from) && (x as X).from >= 1
+    && ((x as X).name === null || (typeof (x as X).name === 'string' && ((x as X).name as string).length <= 40))));
 }
 const nn = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 function dupCount(ev: Ev) { const act = new Set(ev.active || []); const ps = (ev.players || []).filter(p => act.has(p.id)); return ps.length - new Set(ps.map(p => nn(p.name))).size; }
 const PER = `select k, n, code, date, pf, pa, id from stat_matches m cross join lateral (
-  select lower(x) k, x n, m.sa pf, m.sb pa from unnest(m.an) x union all select lower(x), x, m.sb, m.sa from unnest(m.bn) x) s where (m.hidden = false or $1)`;
+  select lower(x) k, x n, m.sa pf, m.sb pa from unnest(m.an) x union all select lower(x), x, m.sb, m.sa from unnest(m.bn) x) s where (m.hidden = false or $1) and not (s.k = any(m.excl))`;
 
 /** 'YYYY-MM-DDTHH:MM' wall-clock time in America/Chicago (games store their date that way). */
 function ctLocal(ms: number) {
@@ -92,7 +106,7 @@ export default {
       }
       if (url.pathname === '/stats/player' && req.method === 'GET') {
         await ensureStats(); const k = (url.searchParams.get('name') || '').trim().toLowerCase();
-        const { rows } = await pool.query(`select id, code, ev_name, date, an, bn, sa, sb from stat_matches where ($2 or hidden=false) and ($1 = any(ak) or $1 = any(bk)) order by date desc, id desc limit 500`, [k, test]);
+        const { rows } = await pool.query(`select id, code, ev_name, date, an, bn, sa, sb from stat_matches where ($2 or hidden=false) and ($1 = any(ak) or $1 = any(bk)) and not ($1 = any(excl)) order by date desc, id desc limit 500`, [k, test]);
         return j({ matches: rows });
       }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);
@@ -129,6 +143,11 @@ export default {
           // Only the host (who tapped Start) can end/reopen the game or change the number of rounds. Older games with no starter are unchanged.
           // The creator's phone (org=1) counts as the starter when the game was started as 'organizer' (it may also have joined as a player).
           const isStarter = by === cur.startedBy || (cur.startedBy === 'organizer' && url.searchParams.get('org') === '1');
+          // Subs (approved exception to the locked roster): only the starter can add/undo them; entries must name players in the game.
+          if (JSON.stringify(body.data.subs || []) !== JSON.stringify(cur.subs || [])) {
+            if (cur.startedBy && !isStarter) return j({ error: 'host only', field: 'subs', data: cur }, 409);
+            if (!validSubs(body.data.subs, new Set((cur.players || []).map(p => p.id)))) return j({ error: 'bad subs', data: cur }, 409);
+          }
           if (cur.startedBy && !isStarter) {
             if (!!body.data.finished !== !!cur.finished) return j({ error: 'host only', field: 'finished', data: cur }, 409);
             if (body.data.totalRounds !== cur.totalRounds) return j({ error: 'host only', field: 'totalRounds', data: cur }, 409);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -307,7 +307,7 @@ function allViews(ev: EventT): View[] {
   return v;
 }
 
-function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string; host: boolean }) {
+function Courts({ ev, act, me, host }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string; host: boolean }) {
   const views = allViews(ev); const curIdx = ev.rounds.length - 1;
   const [sel, setSel] = useState(curIdx);
   const lastCur = useRef(curIdx);
@@ -325,6 +325,8 @@ function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: stri
   const tx = useRef<number | null>(null);
   const go2 = (d: number) => setSel(Math.min(Math.max(0, vi + d), views.length - 1));
   const title = v.kind === 'played' ? roundLabel(ev, v.idx) : 'Round ' + v.n;
+  // names as of this round (subs show as "Guest (for Steve)")
+  const vnm = (id: string) => slotName(ev, id, v.kind === 'played' ? subRound(v.r) : v.n);
   const showOf = v.kind !== 'played' || !v.r.playoff;
   const state = (x: View, i: number) => i === curIdx ? 'cur' : x.kind === 'played' ? (x.r.matches.every(scored) ? 'done' : 'part') : x.kind === 'plan' && isLocked(x.r) ? (x.r.matches.every(scored) ? 'done' : 'part') : 'up';
   const lastReg = !isPO && regular >= ev.totalRounds;
@@ -334,13 +336,13 @@ function Courts({ ev, act, nm, me, host }: { ev: EventT; act: Act; nm: (id: stri
     <div className="roundNav"><button className="arrow" aria-label="Previous round" disabled={vi === 0} onClick={() => go2(-1)}>‹</button>
       <div className="rtitle"><h2>{title} {showOf && <span className="muted">of {ev.totalRounds}</span>}</h2><div className="small muted">{vi === curIdx ? (ev.finished ? 'Final round' : 'Now playing') : v.kind === 'played' ? 'Earlier round' : v.kind === 'plan' ? (isLocked(v.r) ? <>Playing ahead · pairings locked <Icon n="lock" size={14} /></> : 'Upcoming · preview') : 'Upcoming'}</div></div>
       <button className="arrow" aria-label="Next round" disabled={vi >= views.length - 1} onClick={() => go2(1)}>›</button></div>
-    {vi === curIdx && champion && <div className="card champ"><Icon n="trophy" /> Champions: {champion.map(nm).join(' & ')}</div>}
+    {vi === curIdx && champion && <div className="card champ"><Icon n="trophy" /> Champions: {champion.map(vnm).join(' & ')}</div>}
     {vi === curIdx && ev.finished && !champion && <div className="card champ"><Icon n="flag" /> Event finished — see Standings</div>}
     {ev.finished && <div className="lockNote readOnly" role="note"><Icon n="lock" size={18} /> Match complete · scores are final (read-only)</div>}
     {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
       {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.</p>}
-      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={nm} me={me} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
-      {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(nm).join(' · ')}</div></div>}</>}
+      {v.r.matches.map((m, i) => <CourtCard key={vi + '-' + i} m={m} nm={vnm} me={me} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} />)}
+      {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(vnm).join(' · ')}</div></div>}</>}
     {vi === curIdx && !ev.finished && !(lastReg) && canAdvance && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
     {vi === curIdx && !ev.finished && !canAdvance && !lastReg && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> Only {hostName(ev)} (who started the game) can finish it.</div>}
     {vi === curIdx && !ev.finished && lastReg && !host && <div className="card lastRound hostOnly"><b>That's the last round.</b><div className="muted small">Only {hostName(ev)} (who started the game) can end it or add rounds.</div>
@@ -400,20 +402,20 @@ function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => st
     <div className="card next">{ev.finished ? <b>Event finished</b> : cur?.m ? <>
       <div className="muted">{scored(cur.m) ? 'Your latest game' : 'Your game now'} · {roundLabel(ev, cur.i)}</div>
       <div className="bigcourt">Court {courtLabel(ev, cur.m.court)}</div>
-      <div>Partner: <b>{partner(cur.m).map(nm).join(', ') || '—'}</b></div>
-      <div>vs <b>{opps(cur.m).map(nm).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
+      <div>Partner: <b>{partner(cur.m).map(id => slotName(ev, id, subRound(cur.r))).join(', ') || '—'}</b></div>
+      <div>vs <b>{opps(cur.m).map(id => slotName(ev, id, subRound(cur.r))).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
     <h2>Your games</h2>
-    {mine.map(({ i, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={nm} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
-    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={nm} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
+    {mine.map(({ i, r, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={id => slotName(ev, id, subRound(r))} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
+    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={id => slotName(ev, id, n)} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
 
-function Schedule({ ev, nm, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
+function Schedule({ ev, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
   return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={nm} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
-    {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(nm).join(', ')}</div>}
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={id => slotName(ev, id, subRound(r))} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(id => slotName(ev, id, subRound(r))).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
 
@@ -425,7 +427,7 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
     {ev.finished && st[0] && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {teams && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td>{s.name}{!ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td>{s.name}{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
     <p className="muted small">Ranked by wins, then point differential, then points scored. Playoff games not included.</p>
   </div>;
 }
@@ -440,8 +442,9 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <h2>Players ({ev.active.length} playing)</h2>
-    <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked: no adding or removing players after the start</div>
+    <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked: no adding or removing players after the start (the starter can sub someone in below)</div>
     <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div>
+    <SubIn ev={ev} act={act} host={host} />
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
     <div className="card locked"><div className="muted small">Day &amp; time</div><div className="lockedVal">{fmtWhen(ev.date).day} {fmtWhen(ev.date).date} · {fmtWhen(ev.date).time}</div>
@@ -595,5 +598,35 @@ function FullCard({ ev, onPick }: { ev: EventT; onPick: (id: string) => void }) 
     <button className="big" onClick={() => go('join')}>Find another game</button>
     {joined.length > 0 && <><h3 className="small muted">Already playing? Tap your name</h3>
       <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
+  </div>;
+}
+
+/** Starter only: someone plays a player's spot from a round on (pairings unchanged); results go to the sub. Undo, or put the player back in for a later round. */
+function SubIn({ ev, act, host }: { ev: EventT; act: Act; host: boolean }) {
+  const [who, setWho] = useState(''); const reg = ev.rounds.filter(r => !r.playoff).length;
+  const [from, setFrom] = useState(Math.max(1, reg)); const [name, setName] = useState(''); const [back, setBack] = useState(false);
+  const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const subs = [...(ev.subs || [])].sort((a, b) => nm(a.slot).localeCompare(nm(b.slot)) || a.from - b.from);
+  const open = (id: string, isBack: boolean) => { setWho(id); setBack(isBack); setName(''); setFrom(Math.max(1, reg)); };
+  const save = () => { const id = who, f = from, n = back ? null : (name.trim() || 'Guest'); setWho('');
+    act(e => { e.subs = [...(e.subs || []).filter(x => !(x.slot === id && x.from === f)), { slot: id, from: f, name: n, at: Date.now() }]; }); };
+  const rounds = Array.from({ length: Math.max(ev.totalRounds, reg) }, (_, i) => i + 1);
+  if (!host && !subs.length) return null;
+  return <div className="card subsCard"><b>Subs</b>
+    {host && !ev.finished && <p className="muted small">Someone filling in for a player? Tap Sub in. Pairings stay the same; from that round on, that spot's games count for the sub (Guest stays out of Overall stats).</p>}
+    {subs.map(x => <div key={x.slot + x.from} className="pairRow subRow"><span className="grow">{x.name ? <><b>{x.name}</b> for {nm(x.slot)}</> : <><b>{nm(x.slot)}</b> back in</>} · from Round {x.from}</span>
+      {host && !ev.finished && <button className="ghost small" aria-label={'Undo sub ' + nm(x.slot) + ' round ' + x.from} onClick={() => act(e => { e.subs = (e.subs || []).filter(y => !(y.slot === x.slot && y.from === x.from)); })}>Undo</button>}</div>)}
+    {host && !ev.finished && <div className="subList">{ev.players.filter(p => ev.active.includes(p.id)).map(p => { const out = !!subAt(ev, p.id, 9999);
+      return <div key={p.id} className="pairRow"><span className="grow">{p.name}{out && <span className="tag">subbed out</span>}</span>
+        <button className="ghost small" aria-label={'Sub in for ' + p.name} onClick={() => open(p.id, false)}>Sub in</button>
+        {out && <button className="ghost small" aria-label={'Put ' + p.name + ' back in'} onClick={() => open(p.id, true)}>Back in</button>}</div>; })}</div>}
+    {who && <div className="sheetBg" onClick={() => setWho('')}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sub-t" onClick={e => e.stopPropagation()}>
+      <h2 id="sub-t">{back ? `Put ${nm(who)} back in` : `Sub in for ${nm(who)}`}</h2>
+      <label htmlFor="sub-from">Starting round</label>
+      <select id="sub-from" value={from} onChange={e => setFrom(Number(e.target.value))}>{rounds.map(n => <option key={n} value={n}>Round {n}{n < reg ? ' (played)' : n === reg ? ' (current)' : ''}</option>)}</select>
+      {!back && <><label htmlFor="sub-name">Sub's name</label><input id="sub-name" placeholder="Guest" maxLength={40} autoCapitalize="words" value={name} onChange={e => setName(e.target.value)} />
+        <p className="muted small">Leave blank for Guest (not counted in Overall stats).</p></>}
+      <button className="big primary" onClick={save}>{back ? 'Put back in' : 'Sub in'}</button>
+      <button className="big" onClick={() => setWho('')}>Cancel</button></div></div>}
   </div>;
 }

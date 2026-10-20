@@ -9,12 +9,27 @@ export interface EventT {
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
   rounds: Round[]; createdAt: number; finished?: boolean; hidden?: boolean;
+  subs?: Sub[]; // after the start: someone plays a player's slot from a round on (null name = original back in). Pairings unchanged; results credited to the sub.
   courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
 export type Rng = () => number;
+/** A sub plays `slot` (a player id) from regular round `from` on; name null = the original player is back. 'Guest' (or blank) = unnamed guest, kept out of Overall stats. */
+export interface Sub { slot: string; from: number; name: string | null; at?: number }
+/** Round number for sub purposes: regular rounds by n; playoffs come after every regular round. */
+export const subRound = (r: Pick<Round, 'n' | 'playoff'>) => r.playoff ? 10000 + r.n : r.n;
+/** Who is in a slot in a round: null = the original player, else the sub's name. */
+export function subAt(ev: Pick<EventT, 'subs'>, slot: string, n: number): string | null {
+  let cur: Sub | undefined; for (const x of ev.subs || []) if (x.slot === slot && x.from <= n && (!cur || x.from >= cur.from)) cur = x;
+  return cur ? (cur.name?.trim() || null) : null;
+}
+export const isGuest = (name: string) => /^guest$/i.test(name.trim());
+/** Display name for a slot in a round, e.g. "Guest (for Steve)". */
+export function slotName(ev: Pick<EventT, 'subs' | 'players'>, id: string, n: number) {
+  const orig = ev.players.find(p => p.id === id)?.name || '?'; const s = subAt(ev, id, n); return s ? `${s} (for ${orig})` : orig;
+}
 /** Players per fixed unit: Mixed Doubles and Set Partners use organizer-set pairs, Team Battle uses 4s. */
 export const unitSize = (f: Format) => f === 'team' ? 4 : f === 'fixed' || f === 'mixed' ? 2 : 1;
 export function mulberry(seed: number): Rng {
@@ -111,7 +126,10 @@ export function standings(ev: EventT, includePlayoff = false): Standing[] {
     if (ev.rounds.includes(r)) for (const b of r.byes) { const s = map.get(b); if (s) s.byes++; }
     for (const m of r.matches) {
       if (!scored(m)) continue;
-      const add = (t: string[], f: number, a: number) => t.forEach(p => { const s = map.get(p); if (!s) return; s.gp++; s.pf += f; s.pa += a; s.diff += f - a; if (f > a) s.w++; else s.l++; });
+      const rn = subRound(r);
+      const add = (t: string[], f: number, a: number) => t.forEach(p0 => { const sn = subAt(ev, p0, rn); const p = sn ? 'sub:' + p0 + ':' + sn.toLowerCase() : p0;
+        if (sn && !map.has(p)) map.set(p, { id: p, name: slotName(ev, p0, rn), w: 0, l: 0, gp: 0, pf: 0, pa: 0, diff: 0, byes: 0 });
+        const s = map.get(p); if (!s) return; s.gp++; s.pf += f; s.pa += a; s.diff += f - a; if (f > a) s.w++; else s.l++; });
       add(m.a, m.sa!, m.sb!); add(m.b, m.sb!, m.sa!);
     }
   }

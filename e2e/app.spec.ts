@@ -776,3 +776,56 @@ test('creator changes max before start (never below sign-ups, no one lost); othe
   await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, maxPlayers: 16 } } }); expect((await (await request.get(API + '/e/' + code)).json()).data.maxPlayers).toBe(8);
   await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true } } });
 });
+
+test('Sub in (starter only): Guest / named sub from a round on, pairings unchanged, credited to the sub, undo + back in; Guest kept out of Overall', async ({ page, browser, request }) => {
+  test.setTimeout(150000);
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const code = 'SB' + tag.toUpperCase();
+  const ps = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal'].map((n, i) => ({ id: 'b' + i, name: n + ' ' + tag }));
+  const lobby = { id: code, name: 'Sub test ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 2, totalRounds: 3, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], rounds: [], createdAt: 1, hidden: true };
+  expect((await request.put(API + '/e/' + code, { data: { data: lobby } })).ok()).toBe(true);
+  page.on('dialog', d => d.accept()); await page.addInitScript(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  const scoreAll = async () => { for (let i = 0; i < 2; i++) { const m = page.locator('.match').nth(i); await m.getByLabel('Team A score').fill('11'); await m.getByLabel('Team B score').fill(String(4 + i)); await m.getByRole('button', { name: 'Save score' }).click(); await expect(m.locator('.final')).toBeVisible(); } };
+  await scoreAll(); await page.getByRole('button', { name: /Next: Round 2/ }).click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible();
+  const r2 = JSON.stringify((await (await request.get(API + '/e/' + code)).json()).data.rounds[1]);
+  const p0 = (await (await request.get(API + '/e/' + code)).json()).data.rounds[1].matches[0].a[0] as string; const n0 = ps.find(p => p.id === p0)!.name;
+  const p1 = (await (await request.get(API + '/e/' + code)).json()).data.rounds[1].matches[1].b[1] as string; const n1 = ps.find(p => p.id === p1)!.name;
+  // Manage: Sub in Guest for p0 from Round 2 (current)
+  await page.getByRole('button', { name: /Manage/ }).click();
+  await page.getByRole('button', { name: 'Sub in for ' + n0 }).click();
+  await expect(page.getByLabel('Starting round')).toHaveValue('2'); await expect(page.getByLabel("Sub's name")).toHaveAttribute('placeholder', 'Guest');
+  await page.screenshot({ path: 'e2e/shot-sub-sheet.png' });
+  await page.getByRole('dialog').getByRole('button', { name: 'Sub in' }).click();
+  await expect(page.getByText('Guest for ' + n0 + ' · from Round 2')).toBeVisible();
+  // named sub for p1, then undo it
+  await page.getByRole('button', { name: 'Sub in for ' + n1 }).click(); await page.getByLabel("Sub's name").fill('Zoe ' + tag); await page.getByRole('dialog').getByRole('button', { name: 'Sub in' }).click();
+  await expect(page.getByText('Zoe ' + tag + ' for ' + n1)).toBeVisible();
+  await page.getByRole('button', { name: 'Undo sub ' + n1 + ' round 2' }).click(); await expect(page.getByText('Zoe ' + tag + ' for ' + n1)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sub in for ' + n1 }).click(); await page.getByLabel("Sub's name").fill('Zoe ' + tag); await page.getByRole('dialog').getByRole('button', { name: 'Sub in' }).click();
+  await page.screenshot({ path: 'e2e/shot-sub-manage.png', fullPage: true });
+  // a player's phone can't change subs
+  const cur = (await (await request.get(API + '/e/' + code)).json()).data; expect(JSON.stringify(cur.rounds[1])).toBe(r2); expect(cur.players).toEqual(ps); expect(cur.active).toEqual(lobby.active);
+  const bad = await request.put(API + '/e/' + code + '?by=b3', { data: { data: { ...cur, subs: [] } } }); expect(bad.status()).toBe(409); expect((await bad.json()).field).toBe('subs');
+  // Courts: round 2 names show the subs; round 1 unchanged
+  await page.getByRole('button', { name: /Courts/ }).click();
+  await expect(page.locator('.match').first()).toContainText('Guest (for ' + n0 + ')'); await expect(page.locator('.match').nth(1)).toContainText('Zoe ' + tag + ' (for ' + n1 + ')');
+  await page.screenshot({ path: 'e2e/shot-sub-courts.png', fullPage: true });
+  await scoreAll(); await page.getByRole('button', { name: /Next: Round 3/ }).click(); await expect(page.getByRole('heading', { name: /Round 3/ })).toBeVisible();
+  // put p0 back in from Round 3
+  await page.getByRole('button', { name: /Manage/ }).click(); await page.getByRole('button', { name: 'Put ' + n0 + ' back in' }).click();
+  await expect(page.getByLabel('Starting round')).toHaveValue('3'); await page.getByRole('dialog').getByRole('button', { name: 'Put back in' }).click();
+  await expect(page.getByText(n0 + ' back in · from Round 3')).toBeVisible();
+  await page.getByRole('button', { name: /Courts/ }).click(); await expect(page.locator('.match', { hasText: 'Guest' })).toHaveCount(0);
+  await scoreAll();
+  const fin = (await (await request.get(API + '/e/' + code)).json()).data;
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...fin, finished: true } } })).ok()).toBe(true);
+  // stats: p0 has r1 + r3; Guest nowhere; Zoe (never swapped back) has r2 + r3; p1 only r1
+  const hist = (n: string) => request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => j.matches.map((m: { id: string }) => m.id.split(':')[1]).sort());
+  expect(await hist(n0), 'n0').toEqual(['r1', 'r3']); expect(await hist('Zoe ' + tag), 'zoe stays in').toEqual(['r2', 'r3']); expect(await hist(n1), 'n1').toEqual(['r1']);
+  const guestRows = await hist('guest'); expect(guestRows.filter((x: string) => x)).toEqual([]);
+  // game standings: Guest row + sub tag
+  await page.getByRole('button', { name: /Standings/ }).click();
+  await expect(page.locator('tr', { hasText: 'Guest (for ' + n0 + ')' })).toBeVisible(); await expect(page.locator('tr', { hasText: 'Zoe ' + tag })).toContainText('sub');
+  await page.screenshot({ path: 'e2e/shot-sub-standings.png', fullPage: true });
+});

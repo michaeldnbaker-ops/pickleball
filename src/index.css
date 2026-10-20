@@ -162,3 +162,4 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .courtChips{gap:8px}.courtChip{min-width:48px;text-align:center;font-weight:800}.moreCourts{border-style:dashed}
 .startCourts{font-weight:700;color:var(--skyText);margin:6px 0}
 .maxEdit .maxRow{margin-top:8px}
+.subsCard .pairRow{flex-wrap:nowrap}.subsCard .pairRow button{font-size:.9rem;min-height:36px;padding:4px 10px;flex:none}.subsCard .subRow .grow{font-size:.95rem}

@@ -16,3 +16,20 @@ describe('picked courts by letter', () => {
   });
   it('8 players on picked B, D → both courts, no sit outs', () => { const e = mk(8, 2, [2, 4]); startEvent(e); expect(e.rounds[0].matches.map(m => courtLabel(e, m.court)).sort()).toEqual(['B', 'D']); expect(e.rounds[0].byes).toHaveLength(0); });
 });
+import { standings, subAt, slotName } from './engine';
+describe('subs', () => {
+  const played = () => { const e = mk(8, 2); startEvent(e); e.rounds[0].matches.forEach((m, k) => { m.sa = 11; m.sb = 5 + k; }); takeNextRound(e); e.rounds[1].matches.forEach((m, k) => { m.sa = 11; m.sb = 3 + k; }); return e; };
+  it('subAt: latest entry at or before the round; null name = original back', () => {
+    const e = mk(8, 2); e.subs = [{ slot: 'p1', from: 2, name: 'Guest' }, { slot: 'p1', from: 4, name: null }, { slot: 'p2', from: 3, name: 'Zed' }];
+    expect([1, 2, 3, 4, 5].map(n => subAt(e, 'p1', n))).toEqual([null, 'Guest', 'Guest', null, null]); expect(subAt(e, 'p2', 3)).toBe('Zed'); expect(slotName(e, 'p1', 2)).toBe('Guest (for P1)'); expect(slotName(e, 'p1', 1)).toBe('P1');
+  });
+  it("credits the sub from that round on; partner/opponents unchanged; pairings unchanged", () => {
+    const e = played(); const before = new Map(standings(e).map(s => [s.id, s])); const pairs = JSON.stringify(e.rounds);
+    const m = e.rounds[1].matches[0]; const who = m.a[0]; e.subs = [{ slot: who, from: 2, name: 'Guest' }];
+    const after = new Map(standings(e).map(s => [s.id, s])); expect(JSON.stringify(e.rounds)).toBe(pairs);
+    const g = after.get('sub:' + who + ':guest')!; expect(g).toMatchObject({ gp: 1, w: 1, pf: 11, name: 'Guest (for ' + e.players.find(p => p.id === who)!.name + ')' });
+    expect(after.get(who)!.gp).toBe(before.get(who)!.gp - 1); expect(after.get(who)!.w).toBe(before.get(who)!.w - 1);
+    for (const p of [m.a[1], ...m.b]) expect(after.get(p)).toEqual(before.get(p));
+  });
+  it('undo (remove the sub) restores the original standings', () => { const e = played(); const b = JSON.stringify(standings(e)); e.subs = [{ slot: 'p0', from: 1, name: 'X' }]; e.subs = []; expect(JSON.stringify(standings(e))).toBe(b); });
+});
