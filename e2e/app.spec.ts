@@ -837,7 +837,8 @@ test('Club vs Club: create with typed teams, joiner placed on a team, home teams
   await page.goto(BASE); await page.getByText('Create a game').click();
   await page.getByLabel('Event name').fill('Club e2e ' + tag); await page.getByPlaceholder('e.g. the gym').fill('Gym');
   await page.getByRole('radio', { name: /Club vs Club/ }).click();
-  await expect(page.getByLabel('Home club')).toHaveValue('Stone Creek'); await page.getByLabel('Visiting club').fill(V);
+  await expect(page.getByLabel(/^Home club/)).toHaveValue('Stone Creek'); await page.getByLabel('Visiting club').selectOption({ label: 'Add club…' }); await page.getByLabel('New club name').fill(V); await page.getByRole('button', { name: 'Save club' }).click();
+  await expect(page.getByLabel('Visiting club')).toHaveValue(V);
   await expect(page.locator('.clubSetup')).toContainText('2 home teams vs 2 visiting teams');
   await page.screenshot({ path: 'e2e/shot-club-create.png', fullPage: true });
   await page.getByRole('button', { name: 'Next: Teams ›' }).click();
@@ -894,7 +895,8 @@ test('Club vs Club: create with typed teams, joiner placed on a team, home teams
   await expect(page.locator('.clubTable').first()).toContainText('Stone Creek 1');
   await page.screenshot({ path: 'e2e/shot-club-standings.png', fullPage: true });
   const hist = (n: string) => request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => (j.matches || []).length);
-  expect(await hist(nm('Hana'))).toBe(2); expect(await hist(nm('Joe'))).toBe(2); expect(await hist(nm('Vera'))).toBe(2); expect(await hist(V + ' 2A')).toBe(0);
+  const histC = (n: string, c: string) => request.get(API + '/stats/player?test=1&club=' + encodeURIComponent(c) + '&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => (j.matches || []).length);
+  expect(await hist(nm('Hana'))).toBe(2); expect(await hist(nm('Joe'))).toBe(2); expect(await histC(nm('Vera'), V)).toBe(2); expect(await hist(nm('Vera'))).toBe(0); expect(await histC(V + ' 2A', V)).toBe(0);
   await ctx.close();
   console.log('CLUBCODE ' + code);
 });
@@ -1014,7 +1016,54 @@ test('Club vs Club join: link opener picks Join as <club>; visitor joined list; 
   const fin = (await (await request.get(API + '/e/' + code)).json()).data;
   expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...fin, finished: true } } })).ok()).toBe(true);
   const hist = (n: string) => request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => (j.matches || []).length);
-  expect(await hist('Val ' + tag)).toBe(2); expect(await hist('Wes ' + tag)).toBe(2); expect(await hist('Hal ' + tag)).toBe(2); expect(await hist(V + ' 1B')).toBe(0);
+  const histC = (n: string, c: string) => request.get(API + '/stats/player?test=1&club=' + encodeURIComponent(c) + '&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => (j.matches || []).length);
+  // visitors' stats go to the visiting club, home players' to the home club
+  expect(await histC('Val ' + tag, V)).toBe(2); expect(await histC('Wes ' + tag, V)).toBe(2); expect(await hist('Val ' + tag)).toBe(0); expect(await hist('Hal ' + tag)).toBe(2); expect(await histC('Hal ' + tag, V)).toBe(0); expect(await histC(V + ' 1B', V)).toBe(0);
   await page.reload(); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await page.screenshot({ path: 'e2e/shot-clubjoin-standings.png', fullPage: true });
   await ctx.close(); await ctx2.close(); console.log('CJCODE ' + code);
+});
+
+test('Clubs: pick/add club at Create (saved for everyone, case-insensitive), stats/Past/trophies scoped by club, Join list tag; existing games stay Stone Creek', async ({ page, request }) => {
+  test.setTimeout(150000);
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const C = 'Maple ' + tag + ' Club'; const ps = ['Amy', 'Ben', 'Cy', 'Di'].map(n => n + ' ' + tag);
+  page.on('dialog', d => d.accept());
+  await page.goto(BASE); await page.getByText('Create a game').click();
+  await page.getByLabel('Event name').fill('Clubs e2e ' + tag);
+  const sel = page.getByLabel('Club (stats go to this club)'); await expect(sel).toHaveValue('Stone Creek');
+  await sel.selectOption({ label: 'Add club…' }); await page.getByLabel('New club name').fill(C); await page.screenshot({ path: 'e2e/shot-clubs-add.png', fullPage: true });
+  await page.getByRole('button', { name: 'Save club' }).click(); await expect(sel).toHaveValue(C);
+  // saved for everyone, deduped case-insensitively
+  const again = await (await request.put(API + '/clubs?test=1', { data: { name: '  ' + C.toUpperCase() + ' ' } })).json(); expect(again.name).toBe(C);
+  const list = (await (await request.get(API + '/clubs?test=1')).json()).clubs as string[]; expect(list[0]).toBe('Stone Creek'); expect(list.filter(c => c.toLowerCase() === C.toLowerCase())).toHaveLength(1);
+  expect((await (await request.get(API + '/clubs')).json()).clubs).not.toContain(C); // hidden test clubs never show publicly
+  await page.screenshot({ path: 'e2e/shot-clubs-create.png', fullPage: true });
+  await page.getByText('Next: Players').click();
+  for (const n of ps) { await page.getByPlaceholder('Full name').fill(n); await page.getByText('Add new player').click(); }
+  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel(/Trophy match/).check();
+  await page.getByRole('button', { name: 'Create game' }).click(); await expect(page.locator('.lobbyStatus')).toBeVisible(); const code = page.url().split('/e/')[1];
+  expect((await (await request.get(API + '/e/' + code)).json()).data.clubName).toBe(C);
+  // Join list tag (game not started yet)
+  await page.goto(BASE + '#/join'); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag }).locator('.clubTag')).toHaveText(C);
+  await page.screenshot({ path: 'e2e/shot-clubs-join.png', fullPage: true });
+  await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  const m = page.locator('.match').first(); await m.getByLabel('Team A score').fill('11'); await m.getByLabel('Team B score').fill('4'); await m.getByRole('button', { name: 'Save' }).click(); await expect(m.locator('.final')).toBeVisible();
+  const fin = (await (await request.get(API + '/e/' + code)).json()).data;
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...fin, finished: true } } })).ok()).toBe(true);
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...fin, clubName: 'Stone Creek' } } })).status()).toBe(409);
+  const win = fin.rounds[0].matches[0].a.map((id: string) => fin.players.find((p: { id: string }) => p.id === id).name)[0] as string;
+  const board = (c: string) => request.get(API + '/stats?test=1&club=' + encodeURIComponent(c)).then(r => r.json()).then(j => j.players.find((p: { k: string }) => p.k === win.toLowerCase()));
+  expect(await board('Stone Creek')).toBeUndefined(); expect(await board(C)).toMatchObject({ games: 1, wins: 1, trophies: 1 });
+  const past = (c: string) => request.get(API + '/past?test=1&club=' + encodeURIComponent(c)).then(r => r.json()).then(j => j.events.map((e: { code: string }) => e.code));
+  expect(await past(C)).toContain(code); expect(await past('Stone Creek')).not.toContain(code);
+  // UI: Overall + Past selectors (default Stone Creek)
+  await page.goto(BASE + '#/stats'); await page.evaluate(() => localStorage.removeItem('pb:clubView')); await page.reload();
+  await expect(page.getByLabel('Club')).toHaveValue('Stone Creek'); await expect(page.locator('tr', { hasText: win })).toHaveCount(0);
+  await page.getByLabel('Club').selectOption(C); await expect(page.locator('tr', { hasText: win }).locator('.trophyBadge')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-clubs-overall.png', fullPage: true });
+  await page.locator('tr', { hasText: win }).click(); await expect(page.locator('.trophyList')).toContainText('Clubs e2e ' + tag); await expect(page.locator('.hist')).toHaveCount(1);
+  await page.goto(BASE + '#/past'); await expect(page.getByLabel('Club')).toHaveValue(C); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-clubs-past.png', fullPage: true });
+  await page.getByLabel('Club').selectOption('Stone Creek'); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toHaveCount(0);
+  console.log('CLUBSCODE ' + code);
 });

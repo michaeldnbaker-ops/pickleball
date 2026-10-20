@@ -15,3 +15,14 @@ describe('trophyWinners', () => {
   it('no scored games = no trophy', () => expect(trophyWinners([])).toEqual([]));
   it('photo validation', () => { expect(validPhoto('data:image/jpeg;base64,AAAA')).toBe(true); expect(validPhoto('data:image/png;base64,AAAA')).toBe(false); expect(validPhoto('data:image/jpeg;base64,' + 'A'.repeat(130000))).toBe(false); });
 });
+import { clubOf } from './index';
+describe('clubOf', () => {
+  it('missing = Stone Creek; Club vs Club = home club', () => {
+    expect(clubOf({})).toBe('Stone Creek'); expect(clubOf({ clubName: ' Maple ' })).toBe('Maple');
+    expect(clubOf({ format: 'club', clubName: 'X', club: { home: 'Oak', away: 'Elm' } })).toBe('Oak');
+  });
+  it('trophy winner keeps the club of the side they played on', () => {
+    const w = trophyWinners([['C:r1:1', 'C', '', '', false, [], [], ['A1', 'A2'], ['B1', 'B2'], 3, 11, [], 'Oak', 'Elm']]);
+    expect(w.map(x => x.club)).toEqual(['Elm', 'Elm']);
+  });
+});

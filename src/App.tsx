@@ -78,10 +78,27 @@ function Home() {
 }
 
 /** Completed matches, newest first; each opens read-only with its final standings. */
+/** Club dropdown: Stone Creek first, then saved clubs; optional last option 'Add club…' opens a name box (saved server-side for everyone). */
+function ClubSelect({ value, onChange, id, label, allowAdd, exclude }: { value: string; onChange: (c: string) => void; id: string; label: string; allowAdd?: boolean; exclude?: string }) {
+  const [clubs, setClubs] = useState<string[]>([S.SC]); const [adding, setAdding] = useState(false); const [nm, setNm] = useState(''); const [err, setErr] = useState('');
+  useEffect(() => { S.listClubs().then(setClubs); }, []);
+  const opts = [...new Map([...clubs, value].filter(Boolean).map(c => [S.clubKey(c), c])).values()].filter(c => !exclude || S.clubKey(c) !== S.clubKey(exclude));
+  const save = async () => { const n = nm.trim(); if (!n) return; setErr('');
+    try { const got = await S.addClub(n); setClubs(await S.listClubs()); onChange(got); setAdding(false); setNm(''); } catch { setErr("Couldn't save the club (offline?)."); } };
+  return <div className="clubSelect"><label htmlFor={id}>{label}</label>
+    <select id={id} value={adding ? '__add' : value} onChange={e => { if (e.target.value === '__add') { setAdding(true); setNm(''); } else { setAdding(false); onChange(e.target.value); } }}>
+      {!value && <option value="">Choose…</option>}
+      {opts.map(c => <option key={c} value={c}>{c}</option>)}{allowAdd && <option value="__add">Add club…</option>}</select>
+    {adding && <div className="row addClub"><input aria-label="New club name" placeholder="Club name" maxLength={40} value={nm} autoFocus onChange={e => setNm(e.target.value)} onKeyDown={e => e.key === 'Enter' && save()} />
+      <button className="primary" onClick={save} disabled={!nm.trim()}>Save club</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>}
+    {err && <p className="warn">{err}</p>}</div>;
+}
+function useClubView(): [string, (c: string) => void] { const [c, setC] = useState(S.clubView()); return [c, (x: string) => { S.setClubView(x); setC(x); }]; }
 function Past() {
-  const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
-  useEffect(() => { S.listPast().then(setList).catch(() => setErr(true)); }, []);
+  const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false); const [club, setClub] = useClubView();
+  useEffect(() => { setList(null); S.listPast(club).then(setList).catch(() => setErr(true)); }, [club]);
   return <div className="page"><Header title="Past matches" back="" />
+    <ClubSelect id="past-club" label="Club" value={club} onChange={setClub} />
     {err && <p className="warn">Couldn't load past matches (offline?).</p>}{!list && !err && <p className="muted">Loading…</p>}
     {list?.length === 0 && <div className="card empty"><b>No completed matches yet</b><p className="muted">A match shows here once its host ends it.</p></div>}
     {list?.map(g => <GameCard key={g.code} g={{ ...g, rounds: 0 }} onClick={() => { S.setTab(g.code, 'standings'); go('e/' + g.code); }} />)}
@@ -89,7 +106,7 @@ function Past() {
 }
 
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
-function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null }; onClick: () => void; join?: boolean }) {
+function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null; club?: string; away?: string | null }; onClick: () => void; join?: boolean }) {
   const w = fmtWhen(g.date); const started = (g.rounds ?? 0) > 0; const live = started && new Date(g.date) <= new Date();
   const full = !started && !!g.max && (g.players ?? 0) >= g.max;
   // Started games open (tap your name); full games show Full (still openable by those already in).
@@ -97,7 +114,7 @@ function GameCard({ g, onClick, join }: { g: { code: string; name: string; date:
   return <button className="card tap game" onClick={onClick}>
     <div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div>
     <div className="gInfo"><div className="gTime">{w.day} · {w.time}{live && <span className="live">In progress</span>}</div>
-      <div className="gName">{g.name}</div>
+      <div className="gName">{g.name}{g.club && S.clubKey(g.club) !== S.clubKey(S.SC) && <span className="clubTag">{g.club}</span>}{g.away && <span className="clubTag">vs {g.away}</span>}</div>
       <div className="muted small">{g.place || 'Place TBA'}{g.players != null ? ` · ${g.max && !started ? g.players + '/' + g.max : g.players} players` : ''}</div></div>
     {join ? <span className={'joinPill' + (pill !== 'Join' ? ' pill' + pill : '')}>{pill}</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
 }
@@ -188,7 +205,7 @@ function NewEvent() {
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
   const [maxP, setMaxP] = useState(8); const [trophy, setTrophy] = useState(false);
-  const [homeClub, setHomeClub] = useState('Stone Creek'); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
+  const [homeClub, setHomeClub] = useState(S.SC); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
   const [clubNames, setClubNames] = useState<{ home: string[][]; away: string[][] }>({ home: [['', ''], ['', '']], away: [['', ''], ['', '']] });
   const isClub = format === 'club';
   const setTeamsN = (n: number) => { setNT(n); setRounds(n); setCourtSet(Array.from({ length: n }, (_, i) => i + 1));
@@ -203,8 +220,8 @@ function NewEvent() {
     players.forEach(S.addToRoster);
     const code = S.newCode();
     const ev: EventT = isClub
-      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), club: newClub(homeClub.trim() || 'Home', awayClub.trim() || 'Visitors', nT), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) }
-      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) };
+      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), clubName: homeClub, club: newClub(homeClub.trim() || S.SC, awayClub.trim() || 'Visitors', nT), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) }
+      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.clubKey(homeClub) !== S.clubKey(S.SC) ? { clubName: homeClub } : {}), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) };
     if (isClub) (['home', 'away'] as const).forEach(sd => clubNames[sd].forEach((t, i) => t.forEach((nm, k) => { if (nm.trim()) setClubSlot(ev, sd, i, k, nm); })));
     S.setOrg(code);
     S.saveLocal(code, ev, true);
@@ -221,12 +238,12 @@ function NewEvent() {
       <label htmlFor="ev-place">Place</label><input id="ev-place" value={place} placeholder="e.g. the gym" onChange={e => setPlace(e.target.value)} />
       <label id="fmt-label">Format</label>
       <div role="radiogroup" aria-labelledby="fmt-label">{FORMATS.map(f => <button type="button" role="radio" aria-checked={format === f.id} key={f.id} className={'card tap fmt ' + (format === f.id ? 'sel' : '')} onClick={() => pickFormat(f.id)}><span className="radio" aria-hidden="true">{format === f.id ? '✓' : ''}</span><span className="fmtText"><b>{f.name}</b><span className="muted small">{f.desc}</span></span></button>)}</div>
+      <ClubSelect id="club-home" label={isClub ? 'Home club (stats go to this club)' : 'Club (stats go to this club)'} value={homeClub} onChange={setHomeClub} allowAdd />
       {isClub && <div className="card clubSetup">
-        <label htmlFor="club-home">Home club</label><input id="club-home" value={homeClub} onChange={e => setHomeClub(e.target.value)} />
-        <label htmlFor="club-away">Visiting club</label><input id="club-away" value={awayClub} placeholder="e.g. Oak Hill" onChange={e => setAwayClub(e.target.value)} />
+        <ClubSelect id="club-away" label="Visiting club" value={awayClub} onChange={setAwayClub} allowAdd exclude={homeClub} />
         <label>Teams per club</label><Stepper value={nT} min={1} max={8} onChange={setTeamsN} />
         <p className="muted small">{nT} home team{nT === 1 ? '' : 's'} vs {nT} visiting team{nT === 1 ? '' : 's'} · 2 players per team · {nT * 4} players</p></div>}
-      <button className="big primary" onClick={() => setStep(2)}>{isClub ? 'Next: Teams ›' : 'Next: Players ›'}</button></>}
+      <button className="big primary" disabled={isClub && (!awayClub.trim() || S.clubKey(awayClub) === S.clubKey(homeClub))} onClick={() => setStep(2)}>{isClub ? 'Next: Teams ›' : 'Next: Players ›'}</button></>}
     {step === 2 && isClub && <>
       <p className="muted small">Optional — type the teams now, or later in the lobby. Players can also join by the game link and you place them on a team. Visitor spots left empty play as guests (not counted in Overall stats).</p>
       {(['home', 'away'] as const).map(sd => <div key={sd} className="card clubSide"><h3>{sd === 'home' ? (homeClub || 'Home') : (awayClub || 'Visitors')}</h3>
@@ -622,11 +639,13 @@ function AdminKey() {
 }
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
-  const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false);
-  useEffect(() => { setErr(false); if (name) { setHist(null); S.statsPlayer(name).then(setHist).catch(() => setErr(true)); S.playerTrophies(name).then(setTro).catch(() => {}); } S.statsBoard().then(setBoard).catch(() => setErr(true)); }, [name]);
+  const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false); const [club, setClub] = useClubView();
+  useEffect(() => { setErr(false); setBoard(null); if (name) { setHist(null); S.statsPlayer(name, club).then(setHist).catch(() => setErr(true)); S.playerTrophies(name, club).then(setTro).catch(() => {}); } S.statsBoard(club).then(setBoard).catch(() => setErr(true)); }, [name, club]);
+  const picker = <ClubSelect id="stats-club" label="Club" value={club} onChange={setClub} />;
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
     return <div className="page"><Header title={st?.name || name} back="stats" />
       <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
+      {picker}
       {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
       {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Trophies', st.trophies || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
       {tro.length > 0 && <><h2>Trophies</h2><ul className="trophyList">{tro.map(t => <li key={t.code} className="card"><span aria-hidden="true">🏆</span> <b>{t.ev_name}</b> <span className="muted small">{fmtWhen(t.date).date} · {t.w}W, {t.diff > 0 ? '+' : ''}{t.diff}</span></li>)}</ul></>}
@@ -637,6 +656,7 @@ function Stats({ name }: { name?: string }) {
           <div>with <b>{mine.filter(x => x.toLowerCase() !== k).join(' & ') || '—'}</b></div><div>vs <b>{opp.join(' & ')}</b></div></div><div className="hScore">{pf}–{pa}</div></div>; })}
     </div>; }
   return <div className="page"><Header title="Overall stats" back="" />
+    {picker}
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
     {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>

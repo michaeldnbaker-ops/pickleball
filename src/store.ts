@@ -52,7 +52,7 @@ export async function mutate(code: string, fn: (e: EventT) => void, current: Eve
   try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch (e) { if (e instanceof StartedError) return rejected(code, base); return { ev, online: false }; }
 }
 
-export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number; max?: number | null }
+export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number; max?: number | null; club?: string; away?: string | null }
 /** Public upcoming games not yet started, soonest first (hides events more than a day past). */
 export async function listEvents(): Promise<Listed[]> {
   const d = new Date(Date.now() - 864e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -64,11 +64,11 @@ export const testMode = () => LS.getItem('pb:hidden') === '1';
 export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number }
 export interface StatMatch { id: string; code: string; ev_name: string; date: string; an: string[]; bn: string[]; sa: number; sb: number }
 const q = () => (testMode() ? '&test=1' : '');
-export async function statsBoard(): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
-export async function statsPlayer(name: string): Promise<StatMatch[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).matches; }
+export async function statsBoard(club = SC): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
+export async function statsPlayer(name: string, club = SC): Promise<StatMatch[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).matches; }
 export const isOrg = (code: string) => LS.getItem('pb:org:' + code) === '1';
 export const setOrg = (code: string) => LS.setItem('pb:org:' + code, '1');
-export async function listPast(): Promise<Listed[]> { const r = await fetch(`${API}/past?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).events; }
+export async function listPast(club = SC): Promise<Listed[]> { const r = await fetch(`${API}/past?x=1${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).events; }
 export const setTab = (code: string, t: string) => sessionStorage.setItem('pb:tab:' + code, t);
 export const takeTab = (code: string) => { const t = sessionStorage.getItem('pb:tab:' + code); sessionStorage.removeItem('pb:tab:' + code); return t; };
 /** Creator cancels an unstarted game: deleted on the server for everyone. */
@@ -110,4 +110,19 @@ export async function resetIcon(name: string) {
 }
 export async function checkAdmin(key: string) { const r = await fetch(`${API}/admin`, { headers: { 'x-admin': key }, cache: 'no-store' }); return r.ok && !!(await r.json()).admin; }
 export interface Trophy { code: string; ev_name: string; date: string; w: number; diff: number }
-export async function playerTrophies(name: string): Promise<Trophy[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).trophies || []; }
+export async function playerTrophies(name: string, club = SC): Promise<Trophy[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).trophies || []; }
+
+// ---- Clubs (stats scope). Branding stays Stone Creek; missing club = Stone Creek. ----
+export const SC = 'Stone Creek';
+export const clubKey = (n: string) => (n || '').trim().replace(/\s+/g, ' ').toLowerCase();
+export async function listClubs(): Promise<string[]> {
+  try { const r = await fetch(`${API}/clubs?x=1${q()}`, { cache: 'no-store' }); if (r.ok) { const c = (await r.json()).clubs as string[]; LS.setItem('pb:clubs', JSON.stringify(c)); return c; } } catch { /* offline */ }
+  try { return JSON.parse(LS.getItem('pb:clubs') || '') as string[]; } catch { return [SC]; }
+}
+/** Saves a club for everyone (case-insensitive: an existing club's spelling wins). Returns the stored name. */
+export async function addClub(name: string): Promise<string> {
+  const r = await fetch(`${API}/clubs?x=1${q()}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+  if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).name;
+}
+export const clubView = () => LS.getItem('pb:clubView') || SC;
+export const setClubView = (c: string) => LS.setItem('pb:clubView', c);

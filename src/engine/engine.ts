@@ -15,6 +15,7 @@ export interface EventT {
   subs?: Sub[]; // after the start: someone plays a player's slot from a round on (null name = original back in). Pairings unchanged; results credited to the sub.
   courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
+  clubName?: string; // stats club (missing = Stone Creek; Club vs Club = home club)
   trophy?: boolean; // Trophy match: 1st place gets a trophy when the game is completed
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
