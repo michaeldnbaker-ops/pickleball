@@ -9,7 +9,9 @@ export const dupCount = (ev: Pick<EventT, 'players' | 'active'>) => { const ps =
 export function removePlayer(ev: EventT, id: string) {
   if (ev.rounds.length) return false;
   ev.players = ev.players.filter(p => p.id !== id); ev.active = ev.active.filter(x => x !== id);
-  ev.teams = (ev.teams || []).filter(t => !t.includes(id)); return true;
+  ev.teams = (ev.teams || []).filter(t => !t.includes(id));
+  if (ev.club) for (const ts of [ev.club.homeTeams, ev.club.awayTeams]) for (const t of ts) for (let k = 0; k < t.length; k++) if (t[k] === id) t[k] = '';
+  return true;
 }
 export const CAPS = [4, 8, 12, 16];
 /** The game's player cap (4/8/12/16), or 0 for no cap (older games). */

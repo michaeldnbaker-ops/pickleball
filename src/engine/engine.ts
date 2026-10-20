@@ -1,6 +1,8 @@
 // Original pairing engine (no third-party code).
-export interface Player { id: string; name: string; dupr?: number } // any legacy 'gender' field in saved data is ignored
-export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team';
+export interface Player { id: string; name: string; dupr?: number; guest?: boolean } // guest: unnamed visitor (kept out of Overall stats) // any legacy 'gender' field in saved data is ignored
+export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team' | 'club';
+/** Club vs Club: N fixed 2-player teams per club ('' = empty slot before the start). Home team i stays on court slot i; visitors move one court each round. */
+export interface Club { home: string; away: string; n: number; homeTeams: string[][]; awayTeams: string[][] }
 export interface Match { court: number; a: string[]; b: string[]; sa?: number; sb?: number; team?: [string, string] }
 export interface Round { n: number; matches: Match[]; byes: string[]; playoff?: boolean }
 export interface EventT {
@@ -9,6 +11,7 @@ export interface EventT {
   players: Player[]; active: string[];
   teams: string[][]; // fixed partners (pairs) or team format (4s)
   rounds: Round[]; createdAt: number; finished?: boolean; hidden?: boolean;
+  club?: Club;
   subs?: Sub[]; // after the start: someone plays a player's slot from a round on (null name = original back in). Pairings unchanged; results credited to the sub.
   courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
@@ -150,6 +153,7 @@ export function teamStandings(ev: EventT) {
 /** Generate the next round for any format. */
 export function nextRound(ev: EventT, rng: Rng = Math.random, iters?: number): Round {
   const n = ev.rounds.filter(r => !r.playoff).length + 1;
+  if (ev.format === 'club' && ev.club) return clubRound(ev.club, n);
   const h = history(ev.rounds);
   const dupr = new Map(ev.players.map(p => [p.id, typeof p.dupr === 'number' && Number.isFinite(p.dupr) ? p.dupr : 3.5]));
   const c: Ctx = { h, dupr, balance: ev.balanceDupr, noise: ev.format === 'mixer' ? 60 : 0.5, rng, iters };
@@ -205,6 +209,7 @@ export function nextRound(ev: EventT, rng: Rng = Math.random, iters?: number): R
 
 /** Playoffs: single elimination. Individual formats form seeded pairs (1+8, 2+7, ...). */
 export function nextPlayoffRound(ev: EventT): Round | null {
+  if (ev.format === 'club') return null; // Club vs Club has no playoffs
   const po = ev.rounds.filter(r => r.playoff);
   const n = ev.rounds.length + 1;
   if (po.length === 0) {
@@ -380,6 +385,7 @@ export function readdPlayer(ev: EventT, pid: string, rng: Rng = Math.random) { i
 /** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. */
 export function startEvent(ev: EventT, rng: Rng = Math.random) {
   if (ev.rounds.length) return;
+  if (ev.format === 'club' && ev.club) { fillClub(ev); const ids = clubIds(ev.club); ev.active = ids; ev.teams = [...ev.club.homeTeams, ...ev.club.awayTeams].map(t => t.slice()); ev.courts = ev.club.n; }
   const unit = unitSize(ev.format);
   if (unit > 1) {
     // keep the organizer's preset pairs/teams (complete, all still in), auto-form the rest
@@ -405,3 +411,45 @@ export function endEvent(ev: EventT) {
 
 /** A game can start only with exactly 4, 8, 12 or 16 players. */
 export const startOk = (n: number) => n === 4 || n === 8 || n === 12 || n === 16;
+
+// ---- Club vs Club ----
+/** Round n: home team i (court slot i+1) plays visiting team (i + n - 1) mod N. Pairings never depend on results. */
+export function clubRound(c: Club, n: number): Round {
+  return { n, matches: c.homeTeams.map((h, i) => ({ court: i + 1, a: h.slice(), b: c.awayTeams[(i + n - 1) % c.n].slice() })), byes: [] };
+}
+export const clubIds = (c: Club) => [...c.homeTeams, ...c.awayTeams].flat().filter(Boolean);
+/** Empty club with N teams per side. */
+export const newClub = (home: string, away: string, n: number): Club => ({ home, away, n, homeTeams: Array.from({ length: n }, () => ['', '']), awayTeams: Array.from({ length: n }, () => ['', '']) });
+/** Every home slot has a player (visitor slots may be empty: they become guests at the start). */
+export const clubReady = (c?: Club) => !!c && c.homeTeams.length === c.n && c.homeTeams.every(t => t.length === 2 && t.every(Boolean));
+/** Before the start: empty visitor slots become unnamed guests ("Visitor 2A") so every court has 4. */
+export function fillClub(ev: EventT) {
+  const c = ev.club; if (!c) return;
+  c.awayTeams.forEach((t, i) => t.forEach((id, k) => { if (id) return; const p: Player = { id: 'g' + i + k + Math.random().toString(36).slice(2, 7), name: `${c.away || 'Visitor'} ${i + 1}${'AB'[k]}`, guest: true }; ev.players.push(p); ev.active.push(p.id); t[k] = p.id; }));
+}
+/** Put a name into a team slot: re-use a joined player with that name who isn't on a team, else add a new player. '' clears the slot. Returns false if the name is already on another team. */
+export function setClubSlot(ev: EventT, side: 'home' | 'away', team: number, slot: number, name: string): boolean {
+  const c = ev.club; if (!c || ev.rounds.length) return false;
+  const teams = side === 'home' ? c.homeTeams : c.awayTeams; const k = normName(name);
+  if (!k) { teams[team][slot] = ''; return true; }
+  const onTeam = new Set(clubIds(c)); const cur = teams[team][slot];
+  const same = ev.players.find(p => normName(p.name) === k && ev.active.includes(p.id));
+  if (same && same.id === cur) return true;
+  if (same && onTeam.has(same.id)) return false;
+  let id = same?.id; if (!id) { id = Math.random().toString(36).slice(2, 10); ev.players.push({ id, name: name.trim().replace(/\s+/g, ' ') }); ev.active.push(id); }
+  teams[team][slot] = id; return true;
+}
+const normName = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+export interface ClubTeamRow { side: 'home' | 'away'; idx: number; label: string; names: string; w: number; l: number; pf: number; pa: number; diff: number }
+/** Per-team W/L/points and club totals (matches won, points). */
+export function clubStandings(ev: EventT) {
+  const c = ev.club!; const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const row = (side: 'home' | 'away', t: string[], i: number): ClubTeamRow => ({ side, idx: i, label: `${side === 'home' ? c.home : c.away} ${i + 1}`, names: t.map(nm).join(' & '), w: 0, l: 0, pf: 0, pa: 0, diff: 0 });
+  const home = c.homeTeams.map((t, i) => row('home', t, i)), away = c.awayTeams.map((t, i) => row('away', t, i));
+  const key = (t: string[]) => [...t].sort().join('+'); const byKey = new Map([...home.map((r, i) => [key(c.homeTeams[i]), r] as const), ...away.map((r, i) => [key(c.awayTeams[i]), r] as const)]);
+  for (const r of [...ev.rounds, ...(ev.plan || []).filter(isLockedR)]) for (const m of r.matches) { if (!scored(m)) continue;
+    for (const [t, f, a] of [[m.a, m.sa!, m.sb!], [m.b, m.sb!, m.sa!]] as const) { const x = byKey.get(key(t)); if (!x) continue; x.pf += f; x.pa += a; x.diff += f - a; if (f > a) x.w++; else x.l++; } }
+  const tot = (rs: ClubTeamRow[]) => ({ won: rs.reduce((s, r) => s + r.w, 0), pf: rs.reduce((s, r) => s + r.pf, 0) });
+  const sort = (rs: ClubTeamRow[]) => [...rs].sort((x, y) => y.w - x.w || y.diff - x.diff || y.pf - x.pf);
+  return { home: sort(home), away: sort(away), totals: { home: tot(home), away: tot(away) } };
+}

@@ -21,6 +21,8 @@ interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; star
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
   const name = new Map((ev.players || []).map(p => [p.id, (p.name || '').trim()]));
+  // Club vs Club: unnamed visitor spots play as guest players; they are kept out of Overall stats (excl).
+  const guestNames = new Set((ev.players || []).filter((p: { guest?: boolean }) => p.guest).map(p => (p.name || "").trim().toLowerCase()));
   const rows: unknown[][] = []; let po = 0;
   for (const r of [...(ev.rounds || []), ...(ev.plan || [])]) {
     const tag = r.playoff ? 'p' + (++po) : 'r' + r.n;
@@ -29,7 +31,7 @@ async function syncStats(code: string, ev: Ev) {
       // Subs: from their round on, a slot's results are credited to the sub; an unnamed Guest is kept out of Overall stats (excl).
       const rn = r.playoff ? 10000 + r.n : r.n; const who = (id: string) => subName(ev.subs, id, rn) ?? (name.get(id) || '?');
       const an = m.a.map(who), bn = m.b.map(who);
-      const excl = [...an, ...bn].filter(x => /^guest$/i.test(x.trim())).map(x => x.toLowerCase());
+      const excl = [...an, ...bn].filter(x => /^guest$/i.test(x.trim()) || guestNames.has(x.trim().toLowerCase())).map(x => x.toLowerCase());
       rows.push([`${code}:${tag}:${m.court}`, code, ev.name || '', ev.date || '', !!ev.hidden, an.map(x => x.toLowerCase()), bn.map(x => x.toLowerCase()), an, bn, m.sa, m.sb, excl]);
     }
   }
@@ -135,7 +137,7 @@ export default {
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
           if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
-          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams'] as const)
+          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
           // Roster is locked after the start: nobody added, dropped or re-added.
           if (ids(body.data.players) !== ids(cur.players)) return j({ error: 'started', field: 'players', data: cur }, 409);
@@ -162,7 +164,11 @@ export default {
         } else if (body.data && (body.data.rounds || []).length > 0) {
           // Starting: exactly 4, 8, 12 or 16 players.
           const n = new Set(body.data.active || []).size;
-          if (![4, 8, 12, 16].includes(n)) return j({ error: 'need 4, 8, 12 or 16 players', players: n, data: cur }, 409);
+          if (body.data.format === 'club') {
+            // Club vs Club: exactly N home + N visiting teams of 2 (empty visitor spots become guests at the start).
+            const c = body.data.club; const N = c?.n;
+            if (!Number.isInteger(N) || N < 1 || N > 8 || n !== 4 * N || body.data.courts !== N || (c.homeTeams || []).length !== N || (c.awayTeams || []).length !== N) return j({ error: 'club teams incomplete', players: n, data: cur }, 409);
+          } else if (![4, 8, 12, 16].includes(n)) return j({ error: 'need 4, 8, 12 or 16 players', players: n, data: cur }, 409);
           if (overCap(cur, body.data)) return j({ error: 'full', max: capOf(cur ?? body.data), data: cur }, 409);
           // The starter must be someone in the game (a removed player's phone can't start as a ghost); otherwise the creator's phone ('organizer').
           const pids = new Set((body.data.players || []).map((p: { id: string }) => p.id));
