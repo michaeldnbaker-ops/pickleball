@@ -128,7 +128,7 @@ export default {
         await ensureStats();
         const { rows } = await pool.query(`with p as (${PER}) select k, (array_agg(n order by date desc))[1] as name, count(*)::int games, sum((pf>pa)::int)::int wins, sum((pf<pa)::int)::int losses,
           sum(pf)::int pf, sum(pa)::int pa, sum(pf-pa)::int diff, count(distinct code)::int events,
-          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1)) trophies from p group by k order by wins desc, diff desc, games desc limit 500`, [test]);
+          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1)) trophies from p group by k order by wins desc, diff desc, games desc limit ${test ? 3000 : 500}`, [test]); // test mode: hidden e2e players pile up
         return j({ players: rows });
       }
       if (url.pathname === '/stats/player' && req.method === 'GET') {

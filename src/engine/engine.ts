@@ -1,5 +1,5 @@
 // Original pairing engine (no third-party code).
-export interface Player { id: string; name: string; dupr?: number; guest?: boolean } // guest: unnamed visitor (kept out of Overall stats) // any legacy 'gender' field in saved data is ignored
+export interface Player { id: string; name: string; dupr?: number; guest?: boolean; side?: 'home' | 'away' } // guest: unnamed visitor (kept out of Overall stats) // any legacy 'gender' field in saved data is ignored
 export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team' | 'club';
 /** Club vs Club: N fixed 2-player teams per club ('' = empty slot before the start). Home team i stays on court slot i; visitors move one court each round. */
 export interface Club { home: string; away: string; n: number; homeTeams: string[][]; awayTeams: string[][] }

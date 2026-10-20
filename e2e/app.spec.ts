@@ -858,7 +858,7 @@ test('Club vs Club: create with typed teams, joiner placed on a team, home teams
   await expect(page.getByText('Fill every home team spot')).toBeVisible();
   // a joiner by link, placed on Home team 2 by the creator
   const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); const p2 = await ctx.newPage();
-  await p2.goto(BASE + '#/e/' + code); await p2.getByPlaceholder('Name').fill(nm('Joe')); await p2.getByRole('button', { name: 'Join' }).click();
+  await p2.goto(BASE + '#/e/' + code); await p2.getByRole('radio', { name: 'Join as Stone Creek' }).click(); await p2.getByPlaceholder('Name').fill(nm('Joe')); await p2.getByRole('button', { name: 'Join as Stone Creek' }).last().click();
   await expect(p2.getByText("You're in as")).toBeVisible(); await expect(p2.getByLabel('Home team 1 player 1')).toHaveText(nm('Hana'));
   await page.getByRole('button', { name: 'Refresh' }).click(); await expect(page.locator('.clubFree')).toContainText(nm('Joe'));
   await page.getByLabel('Home team 2 player 2').fill(nm('Joe')); await page.getByLabel('Home team 2 player 2').press('Enter');
@@ -971,4 +971,50 @@ test('Trophy match: checkbox at Create; 1st place (wins, then diff; co-winners) 
   // can't flip trophy after the start
   expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, trophy: false } } })).status()).toBe(409);
   console.log('TROPHYCODE ' + code);
+});
+
+test('Club vs Club join: link opener picks Join as <club>; visitor joined list; joiner takes a visitor spot, creator places another; named visitors count in Overall, guests do not', async ({ page, browser, request }) => {
+  test.setTimeout(150000);
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const code = 'CJ' + tag.toUpperCase(); const V = 'Elm ' + tag;
+  const hs = ['Hal', 'Hep', 'Hix', 'Hob'].map((n, i) => ({ id: 'h' + i, name: n + ' ' + tag }));
+  const lobby = { id: code, name: 'Club e2e ' + tag, date: day2(), place: 'x', format: 'club', courts: 2, courtSet: [1, 2], totalRounds: 2, balanceDupr: false, seeding: 'random', players: hs, active: hs.map(p => p.id), teams: [], rounds: [], createdAt: 1, hidden: true,
+    club: { home: 'Stone Creek', away: V, n: 2, homeTeams: [['h0', 'h1'], ['h2', 'h3']], awayTeams: [['', ''], ['', '']] } };
+  expect((await request.put(API + '/e/' + code, { data: { data: lobby } })).ok()).toBe(true);
+  page.on('dialog', d => d.accept());
+  // visitor phone: choose the club, join, appear in the visitor joined list, take a spot
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); const v = await ctx.newPage(); v.on('dialog', d => d.accept());
+  await v.goto(BASE + '#/e/' + code);
+  await expect(v.getByRole('radio', { name: 'Join as Stone Creek' })).toBeVisible(); await expect(v.getByPlaceholder('Full name')).toHaveCount(0);
+  await v.screenshot({ path: 'e2e/shot-clubjoin-choose.png', fullPage: true });
+  await v.getByRole('radio', { name: 'Join as ' + V }).click(); await v.getByPlaceholder('Full name').fill('Val ' + tag); await v.getByRole('button', { name: 'Join as ' + V }).last().click();
+  await expect(v.getByText("You're in as")).toBeVisible();
+  await expect(v.locator('.clubFree-away')).toContainText('Val ' + tag);
+  await expect(v.getByRole('button', { name: /^Take Home team/ })).toHaveCount(0);
+  await v.screenshot({ path: 'e2e/shot-clubjoin-visitor-list.png', fullPage: true });
+  await v.getByRole('button', { name: 'Take Visiting team 2 player 1' }).click();
+  await expect(v.locator('.mySpot')).toContainText('Val ' + tag); await expect(v.locator('.clubFree-away')).toHaveCount(0);
+  // a second visitor joins; the creator places them
+  const ctx2 = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx2); const w = await ctx2.newPage();
+  await w.goto(BASE + '#/e/' + code); await w.getByRole('radio', { name: 'Join as ' + V }).click(); await w.getByPlaceholder('Full name').fill('Wes ' + tag); await w.getByRole('button', { name: 'Join as ' + V }).last().click(); await expect(w.getByText("You're in as")).toBeVisible();
+  await page.evaluate(c => localStorage.setItem('pb:org:' + c, '1'), code).catch(() => {}); await page.goto(BASE); await page.evaluate(c => localStorage.setItem('pb:org:' + c, '1'), code); await page.goto(BASE + '#/e/' + code); await page.reload();
+  await expect(page.locator('.clubFree-away')).toContainText('Wes ' + tag);
+  await expect(page.getByLabel('Visiting team 2 player 1')).toHaveValue('Val ' + tag);
+  await page.getByLabel('Visiting team 1 player 1').fill('Wes ' + tag); await page.getByLabel('Visiting team 1 player 1').press('Enter');
+  await expect(page.locator('.clubFree-away')).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/shot-clubjoin-creator.png', fullPage: true });
+  const lob = (await (await request.get(API + '/e/' + code)).json()).data;
+  const vid = lob.players.find((p: { name: string }) => p.name === 'Val ' + tag); expect(vid.side).toBe('away'); expect(lob.club.awayTeams[1][0]).toBe(vid.id);
+  // start: 2 named visitors + 2 guest spots
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  for (let r = 0; r < 2; r++) {
+    for (let i = 0; i < 2; i++) { const m = page.locator('.match').nth(i); await m.getByLabel('Team A score').fill('11'); await m.getByLabel('Team B score').fill(String(5 + i)); await m.getByRole('button', { name: 'Save' }).click(); await expect(m.locator('.final')).toBeVisible(); }
+    if (r === 0) { await page.getByRole('button', { name: /Next: Round 2/ }).click(); await expect(page.getByRole('heading', { name: /Round 2/ })).toBeVisible(); }
+  }
+  const fin = (await (await request.get(API + '/e/' + code)).json()).data;
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...fin, finished: true } } })).ok()).toBe(true);
+  const hist = (n: string) => request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(n.toLowerCase())).then(r => r.json()).then(j => (j.matches || []).length);
+  expect(await hist('Val ' + tag)).toBe(2); expect(await hist('Wes ' + tag)).toBe(2); expect(await hist('Hal ' + tag)).toBe(2); expect(await hist(V + ' 1B')).toBe(0);
+  await page.reload(); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await page.screenshot({ path: 'e2e/shot-clubjoin-standings.png', fullPage: true });
+  await ctx.close(); await ctx2.close(); console.log('CJCODE ' + code);
 });
