@@ -3,7 +3,7 @@ import { closeEvent } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
-const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type', 'content-type': 'application/json' };
+const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
 const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: H });
 
 let ready: Promise<unknown> | null = null;
@@ -11,12 +11,15 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
   id text primary key, code text not null, ev_name text, date text, hidden boolean not null default false,
   ak text[] not null, bk text[] not null, an text[] not null, bn text[] not null, sa int not null, sb int not null, updated_at timestamptz not null default now());
   create index if not exists stat_matches_code on stat_matches(code);
-  alter table stat_matches add column if not exists excl text[] not null default '{}';`).catch(e => { ready = null; throw e; });
+  alter table stat_matches add column if not exists excl text[] not null default '{}';
+  create table if not exists trophies(code text not null, k text not null, name text not null, ev_name text, date text, hidden boolean not null default false, w int not null, diff int not null, primary key(code, k));
+  create table if not exists player_icons(k text primary key, icon text, photo text, owner text not null, v int not null default 1, hidden boolean not null default false, updated_at timestamptz not null default now());
+  create table if not exists app_admin(hash text primary key);`).catch(e => { ready = null; throw e; });
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
 interface X { slot: string; from: number; name: string | null }
-interface Ev { finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
+interface Ev { trophy?: boolean; finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -36,10 +39,31 @@ async function syncStats(code: string, ev: Ev) {
     }
   }
   const ids = rows.map(r => r[0] as string);
+  await syncTrophies(code, ev, rows);
   await pool.query('delete from stat_matches where code=$1 and not (id = any($2::text[]))', [code, ids]);
   for (const r of rows) await pool.query(`insert into stat_matches(id,code,ev_name,date,hidden,ak,bk,an,bn,sa,sb,excl) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     on conflict(id) do update set ev_name=excluded.ev_name, date=excluded.date, hidden=excluded.hidden, ak=excluded.ak, bk=excluded.bk, an=excluded.an, bn=excluded.bn, sa=excluded.sa, sb=excluded.sb, excl=excluded.excl, updated_at=now()`, r);
 }
+/** Trophy match: when the game is completed, 1st place (regular rounds: most wins, then point diff; still tied = co-winners) gets a trophy. Guests excluded. */
+export function trophyWinners(rows: unknown[][]) {
+  const t = new Map<string, { name: string; w: number; diff: number }>();
+  for (const r of rows) { if (String(r[0]).split(':')[1].startsWith('p')) continue; const [an, bn, sa, sb, excl] = [r[7] as string[], r[8] as string[], r[9] as number, r[10] as number, r[11] as string[]];
+    for (const [ns, d] of [[an, sa - sb], [bn, sb - sa]] as [string[], number][]) for (const n of ns) { const k = n.trim().toLowerCase(); if (excl.includes(k) || k === '?') continue;
+      const e = t.get(k) || { name: n.trim(), w: 0, diff: 0 }; e.w += d > 0 ? 1 : 0; e.diff += d; t.set(k, e); } }
+  const all = [...t.entries()]; if (!all.length) return [];
+  const best = all.reduce((b, [, e]) => e.w > b.w || (e.w === b.w && e.diff > b.diff) ? e : b, all[0][1]);
+  return all.filter(([, e]) => e.w === best.w && e.diff === best.diff).map(([k, e]) => ({ k, ...e }));
+}
+async function syncTrophies(code: string, ev: Ev, rows: unknown[][]) {
+  await pool.query('delete from trophies where code=$1', [code]);
+  if (!ev.trophy || !ev.finished) return;
+  for (const w of trophyWinners(rows)) await pool.query('insert into trophies(code,k,name,ev_name,date,hidden,w,diff) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict do nothing', [code, w.k, w.name, ev.name || '', ev.date || '', !!ev.hidden, w.w, w.diff]);
+}
+const sha = async (x: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x)))).map(b => b.toString(16).padStart(2, '0')).join('');
+async function isAdmin(req: Request) { const k = req.headers.get('x-admin'); if (!k || k.length < 16) return false; const { rows } = await pool.query('select 1 from app_admin where hash=$1', [await sha(k)]); return rows.length > 0; }
+export const ICONS = ['paddle', 'ball', 'star', 'fire', 'bolt', 'eagle', 'tiger', 'fox', 'bear', 'turtle', 'cactus', 'wave', 'clover', 'crown', 'rocket', 'target'];
+/** Photo: a client-resized JPEG data URL, at most ~90 KB. */
+export const validPhoto = (p: unknown) => typeof p === 'string' && p.length <= 120000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p);
 function subName(subs: X[] | undefined, slot: string, n: number): string | null {
   let cur: X | undefined; for (const x of subs || []) if (x.slot === slot && x.from <= n && (!cur || x.from >= cur.from)) cur = x;
   return cur ? (cur.name?.trim() || null) : null;
@@ -103,14 +127,45 @@ export default {
       if (url.pathname === '/stats' && req.method === 'GET') {
         await ensureStats();
         const { rows } = await pool.query(`with p as (${PER}) select k, (array_agg(n order by date desc))[1] as name, count(*)::int games, sum((pf>pa)::int)::int wins, sum((pf<pa)::int)::int losses,
-          sum(pf)::int pf, sum(pa)::int pa, sum(pf-pa)::int diff, count(distinct code)::int events from p group by k order by wins desc, diff desc, games desc limit 500`, [test]);
+          sum(pf)::int pf, sum(pa)::int pa, sum(pf-pa)::int diff, count(distinct code)::int events,
+          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1)) trophies from p group by k order by wins desc, diff desc, games desc limit 500`, [test]);
         return j({ players: rows });
       }
       if (url.pathname === '/stats/player' && req.method === 'GET') {
         await ensureStats(); const k = (url.searchParams.get('name') || '').trim().toLowerCase();
         const { rows } = await pool.query(`select id, code, ev_name, date, an, bn, sa, sb from stat_matches where ($2 or hidden=false) and ($1 = any(ak) or $1 = any(bk)) and not ($1 = any(excl)) order by date desc, id desc limit 500`, [k, test]);
-        return j({ matches: rows });
+        const tr = await pool.query('select code, ev_name, date, w, diff from trophies where k=$1 and (hidden=false or $2) order by date desc', [k, test]);
+        return j({ matches: rows, trophies: tr.rows });
       }
+      if (url.pathname === '/icons' && req.method === 'GET') {
+        await ensureStats();
+        const { rows } = await pool.query('select k, icon, (photo is not null) photo, v from player_icons where hidden=false or $1', [test]);
+        return j({ icons: Object.fromEntries(rows.map(r => [r.k, { icon: r.icon, photo: r.photo, v: r.v }])) });
+      }
+      if (url.pathname === '/icon' && req.method === 'GET') {
+        await ensureStats(); const { rows } = await pool.query('select photo from player_icons where k=$1', [nn(url.searchParams.get('k') || '')]);
+        if (!rows[0]?.photo) return j({ error: 'not found' }, 404);
+        const b = Uint8Array.from(atob(rows[0].photo.split(',')[1]), c => c.charCodeAt(0));
+        return new Response(b, { headers: { 'access-control-allow-origin': '*', 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=31536000, immutable' } });
+      }
+      if (url.pathname === '/icon' && req.method === 'PUT') {
+        // Player icons: the first phone to set a name's icon gets a secret owner token; only that token (or the admin key) can change it; the admin can reset it.
+        await ensureStats(); const b = await req.json().catch(() => ({})) as { name?: string; icon?: string; photo?: string; token?: string; reset?: boolean };
+        const k = nn(b.name || ''); if (!k || k.length > 40 || /^guest$/.test(k)) return j({ error: 'bad name' }, 400);
+        const admin = await isAdmin(req);
+        const { rows } = await pool.query('select owner from player_icons where k=$1', [k]);
+        if (b.reset) { if (!admin) return j({ error: 'admin only' }, 403); await pool.query('delete from player_icons where k=$1', [k]); return j({ ok: true }); }
+        const icon = b.photo ? null : b.icon; if (b.photo ? !validPhoto(b.photo) : !ICONS.includes(icon || '')) return j({ error: 'bad icon' }, 400);
+        if (rows[0]) {
+          if (!admin && !(b.token && await sha(b.token) === rows[0].owner)) return j({ error: 'not owner' }, 403);
+          await pool.query('update player_icons set icon=$2, photo=$3, v=v+1, updated_at=now() where k=$1', [k, icon, b.photo || null]); return j({ ok: true });
+        }
+        const token = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(x => x.toString(16).padStart(2, '0')).join('');
+        const ins = await pool.query('insert into player_icons(k,icon,photo,owner,hidden) values($1,$2,$3,$4,$5) on conflict do nothing', [k, icon, b.photo || null, await sha(token), test]);
+        if (!ins.rowCount) return j({ error: 'not owner' }, 403);
+        return j({ ok: true, token });
+      }
+      if (url.pathname === '/admin' && req.method === 'GET') { await ensureStats(); return j({ admin: await isAdmin(req) }); }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);
       if (!m) return j({ ok: true, service: 'pickleball' });
       const code = m[1].toUpperCase();
@@ -137,7 +192,7 @@ export default {
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
           if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
-          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club'] as const)
+          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
           // Roster is locked after the start: nobody added, dropped or re-added.
           if (ids(body.data.players) !== ids(cur.players)) return j({ error: 'started', field: 'players', data: cur }, 409);
@@ -175,7 +230,7 @@ export default {
           for (const f of ['startedBy', 'host'] as const) if (body.data[f] && body.data[f] !== 'organizer' && !pids.has(body.data[f])) body.data[f] = 'organizer';
         }
         const { rows } = await pool.query('insert into events(code,data) values($1,$2) on conflict(code) do update set data=excluded.data, version=events.version+1, updated_at=now() returning version, updated_at', [code, JSON.stringify(body.data)]);
-        let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); } } catch (e) { stats = String(e); }
+        let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); } } catch (e) { stats = String(e); }
         return j({ ...rows[0], stats });
       }
       if (req.method === 'DELETE') {

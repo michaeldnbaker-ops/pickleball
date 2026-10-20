@@ -898,3 +898,77 @@ test('Club vs Club: create with typed teams, joiner placed on a team, home teams
   await ctx.close();
   console.log('CLUBCODE ' + code);
 });
+
+test('Player icons: built-in icon or photo, first phone owns it, others refused, admin reset; shown in lobby/courts/standings/Overall', async ({ page, browser, request }) => {
+  test.setTimeout(150000);
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const code = 'IC' + tag.toUpperCase(); const ivy = 'Ivy ' + tag;
+  const lobby = { id: code, name: 'Icon e2e ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: 1, hidden: true };
+  expect((await request.put(API + '/e/' + code, { data: { data: lobby } })).ok()).toBe(true);
+  page.on('dialog', d => d.accept());
+  await page.goto(BASE + '#/e/' + code); await page.getByPlaceholder('Full name').fill(ivy); await page.getByRole('button', { name: 'Join' }).click();
+  await expect(page.getByText("You're in as")).toBeVisible();
+  await expect(page.locator('.lobbyRow .av')).toHaveAttribute('data-icon', 'none');
+  await page.getByRole('button', { name: 'Set icon' }).click(); await page.screenshot({ path: 'e2e/shot-icon-picker.png' });
+  await page.getByRole('button', { name: 'Icon fox' }).click();
+  await expect(page.locator('.lobbyRow .av')).toHaveAttribute('data-icon', 'fox');
+  // a different phone can't change Ivy's icon
+  const bad = await request.put(API + '/icon?test=1', { data: { name: ivy.toUpperCase(), icon: 'bear' } }); expect(bad.status()).toBe(403);
+  const bad2 = await request.put(API + '/icon?test=1', { data: { name: ivy, icon: 'bear', token: 'nope' } }); expect(bad2.status()).toBe(403);
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] }); await markTest(ctx); const p2 = await ctx.newPage(); p2.on('dialog', d => d.accept());
+  await p2.goto(BASE + '#/e/' + code); await p2.getByPlaceholder('Full name').fill('Max ' + tag); await p2.getByRole('button', { name: 'Join' }).click();
+  await expect(p2.locator('.lobbyRow', { hasText: ivy }).locator('.av')).toHaveAttribute('data-icon', 'fox');
+  // the owner uploads a photo: resized to 256px JPEG on the phone
+  await page.getByRole('button', { name: 'Set icon' }).click(); await page.getByLabel('Upload photo').setInputFiles('e2e/fixture-photo.png');
+  await expect(page.locator('.lobbyRow', { hasText: ivy }).locator('.av')).toHaveAttribute('data-icon', 'photo');
+  const img = await request.get(API + '/icon?k=' + encodeURIComponent(ivy.toLowerCase()) + '&v=2'); expect(img.headers()['content-type']).toBe('image/jpeg');
+  const jb = await img.body(); expect(jb.length).toBeLessThan(90000); expect(jb.readUInt16BE(jb.indexOf(Buffer.from([0xff, 0xc0])) + 5)).toBe(256);
+  await expect.poll(() => page.locator('.lobbyRow', { hasText: ivy }).locator('img').evaluate((e: HTMLImageElement) => e.naturalWidth)).toBe(256);
+  await page.screenshot({ path: 'e2e/shot-icon-lobby.png', fullPage: true });
+  // add 2 more and play: icons on courts + standings
+  for (const n of ['Ned', 'Oli']) { await p2.getByRole('button', { name: 'Not you?' }).click(); await p2.getByPlaceholder('Full name').fill(n + ' ' + tag); await p2.getByRole('button', { name: 'Join' }).click(); await expect(p2.getByText("You're in as")).toBeVisible(); }
+  await page.getByRole('button', { name: 'Refresh' }).click(); await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  await expect(page.locator('.match img.av')).toHaveCount(1);
+  await page.screenshot({ path: 'e2e/shot-icon-courts.png', fullPage: true });
+  // admin reset (admin key from env, never in the repo)
+  expect((await request.put(API + '/icon?test=1', { data: { name: ivy, reset: true } })).status()).toBe(403);
+  if (process.env.ADMIN_KEY) {
+    expect((await request.put(API + '/icon?test=1', { headers: { 'x-admin': process.env.ADMIN_KEY }, data: { name: ivy, reset: true } })).ok()).toBe(true);
+    expect((await (await request.get(API + '/icons?test=1')).json()).icons[ivy.toLowerCase()]).toBeUndefined();
+    // after a reset the next phone becomes the owner
+    const r = await request.put(API + '/icon?test=1', { data: { name: ivy, icon: 'crown' } }); expect(r.ok()).toBe(true); expect((await r.json()).token).toBeTruthy();
+    await page.reload(); await expect(page.locator('.match .av[data-icon="crown"]')).toHaveCount(1);
+  }
+  await ctx.close(); console.log('ICONCODE ' + code);
+});
+
+test('Trophy match: checkbox at Create; 1st place (wins, then diff; co-winners) gets a trophy on completion; badge + count in Overall + trophy list', async ({ page, request }) => {
+  test.setTimeout(120000);
+  page.on('dialog', d => d.accept());
+  await page.goto(BASE); await page.getByText('Create a game').click(); await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click();
+  await expect(page.getByLabel(/Trophy match/)).not.toBeChecked();
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const code = 'TR' + tag.toUpperCase();
+  const ps = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal'].map((n, i) => ({ id: 't' + i, name: n + ' ' + tag }));
+  const lobby = { id: code, name: 'Trophy e2e ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 2, totalRounds: 1, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], rounds: [], createdAt: 1, hidden: true, trophy: true };
+  expect((await request.put(API + '/e/' + code, { data: { data: lobby } })).ok()).toBe(true);
+  await page.evaluate(c => localStorage.setItem('pb:org:' + c, '1'), code);
+  await page.goto(BASE + '#/e/' + code); await page.reload(); await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  for (let i = 0; i < 2; i++) { const m = page.locator('.match').nth(i); await m.getByLabel('Team A score').fill('11'); await m.getByLabel('Team B score').fill(String(3 + i * 4)); await m.getByRole('button', { name: 'Save' }).click(); await expect(m.locator('.final')).toBeVisible(); }
+  await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('.trophyNote')).toBeVisible();
+  const ev = (await (await request.get(API + '/e/' + code)).json()).data;
+  const nm = (id: string) => ps.find(p => p.id === id)!.name; const win = ev.rounds[0].matches[0].a.map(nm).sort();
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, finished: true } } })).ok()).toBe(true);
+  await page.reload(); await page.getByRole('button', { name: 'Standings', exact: true }).click();
+  await expect(page.locator('.trophyWin')).toContainText(win.join(' & ')); await expect(page.locator('.trophyWin')).toContainText('co-winners');
+  await expect(page.locator('tbody tr', { has: page.locator('.trophyBadge') })).toHaveCount(2);
+  await page.screenshot({ path: 'e2e/shot-trophy-standings.png', fullPage: true });
+  const st = (await (await request.get(API + '/stats?test=1')).json()).players; expect(st.find((p: { k: string }) => p.k === win[0].toLowerCase()).trophies).toBe(1); expect(st.find((p: { k: string }) => p.k === nm(ev.rounds[0].matches[1].a[0]).toLowerCase()).trophies).toBe(0);
+  await page.goto(BASE + '#/stats'); await expect(page.locator('tr', { hasText: win[0] }).locator('.trophyBadge')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-trophy-overall.png', fullPage: true });
+  await page.goto(BASE + '#/stats/' + encodeURIComponent(win[0].toLowerCase())); await expect(page.locator('.trophyList')).toContainText('Trophy e2e ' + tag);
+  await page.screenshot({ path: 'e2e/shot-trophy-player.png', fullPage: true });
+  // can't flip trophy after the start
+  expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, trophy: false } } })).status()).toBe(409);
+  console.log('TROPHYCODE ' + code);
+});

@@ -15,6 +15,7 @@ export interface EventT {
   subs?: Sub[]; // after the start: someone plays a player's slot from a round on (null name = original back in). Pairings unchanged; results credited to the sub.
   courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
+  trophy?: boolean; // Trophy match: 1st place gets a trophy when the game is completed
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
@@ -452,4 +453,13 @@ export function clubStandings(ev: EventT) {
   const tot = (rs: ClubTeamRow[]) => ({ won: rs.reduce((s, r) => s + r.w, 0), pf: rs.reduce((s, r) => s + r.pf, 0) });
   const sort = (rs: ClubTeamRow[]) => [...rs].sort((x, y) => y.w - x.w || y.diff - x.diff || y.pf - x.pf);
   return { home: sort(home), away: sort(away), totals: { home: tot(home), away: tot(away) } };
+}
+
+/** Trophy match: 1st place among players who played (most wins, then point diff; still tied = co-winners). Guests excluded. Same rule as the server. */
+export function trophyWinners(ev: EventT) {
+  if (!ev.trophy || !ev.finished) return [];
+  const st = standings(ev).filter(s => s.gp > 0 && !/^guest$/i.test(s.name.trim()) && !ev.players.find(p => p.id === s.id)?.guest);
+  if (!st.length) return [];
+  const b = st.reduce((x, s) => s.w > x.w || (s.w === x.w && s.diff > x.diff) ? s : x, st[0]);
+  return st.filter(s => s.w === b.w && s.diff === b.diff);
 }

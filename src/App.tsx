@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -187,7 +187,7 @@ function NewEvent() {
   const [courtSet, setCourtSet] = useState<number[]>([1, 2, 3]); const courts = courtSet.length; const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [maxP, setMaxP] = useState(8);
+  const [maxP, setMaxP] = useState(8); const [trophy, setTrophy] = useState(false);
   const [homeClub, setHomeClub] = useState('Stone Creek'); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
   const [clubNames, setClubNames] = useState<{ home: string[][]; away: string[][] }>({ home: [['', ''], ['', '']], away: [['', ''], ['', '']] });
   const isClub = format === 'club';
@@ -203,8 +203,8 @@ function NewEvent() {
     players.forEach(S.addToRoster);
     const code = S.newCode();
     const ev: EventT = isClub
-      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), club: newClub(homeClub.trim() || 'Home', awayClub.trim() || 'Visitors', nT), ...(S.testMode() ? { hidden: true } : {}) }
-      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.testMode() ? { hidden: true } : {}) };
+      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), club: newClub(homeClub.trim() || 'Home', awayClub.trim() || 'Visitors', nT), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) }
+      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) };
     if (isClub) (['home', 'away'] as const).forEach(sd => clubNames[sd].forEach((t, i) => t.forEach((nm, k) => { if (nm.trim()) setClubSlot(ev, sd, i, k, nm); })));
     S.setOrg(code);
     S.saveLocal(code, ev, true);
@@ -252,6 +252,7 @@ function NewEvent() {
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
       {!isClub && <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>}
+      <label className="row check trophyCheck"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> 🏆 Trophy match — 1st place wins a trophy</label>
       <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy || (isClub && courts !== nT)} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
 }
@@ -391,7 +392,7 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName 
   const mine = !!me && (m.a.includes(me) || m.b.includes(me));
   const entering = !!onScore && (!has || edit);
   const side = (t: string[], v: number | '', set: (n: number | '') => void, pts: number | undefined, win: boolean, tag: string) => <div className={'side ' + (has && !entering ? (win ? 'win' : 'lose') : '') + (me && t.includes(me) ? ' myside' : '')}>
-    <div className="names" aria-label={'Team ' + tag}>{t.map(p => onName ? <div key={p}><button className={'nameBtn' + (p === me ? ' meName' : '')} aria-label={'Player ' + nm(p) + ' options'} onClick={() => onName(p)}>{nm(p)}</button></div> : <div key={p} className={p === me ? 'meName' : ''}>{nm(p)}</div>)}</div>
+    <div className="names" aria-label={'Team ' + tag}>{t.map(p => onName ? <div key={p}><button className={'nameBtn' + (p === me ? ' meName' : '')} aria-label={'Player ' + nm(p) + ' options'} onClick={() => onName(p)}><Avatar name={nm(p)} size={22} /> {nm(p)}</button></div> : <div key={p} className={p === me ? 'meName' : ''}><Avatar name={nm(p)} size={22} /> {nm(p)}</div>)}</div>
     {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
   </div>;
   return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
@@ -474,15 +475,17 @@ function ClubTeams({ ev, act, edit }: { ev: EventT; act: Act; edit: boolean }) {
     <p className="muted small">Empty visitor spots play as guests (not counted in Overall stats).</p></div>;
 }
 function Standings({ ev, me }: { ev: EventT; me?: string }) {
-  const st = standings(ev);
+  const st = standings(ev); const tw = trophyWinners(ev); const twIds = new Set(tw.map(t => t.id));
   const teams = unitSize(ev.format) > 1;
   return <div>
     <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
-    {ev.finished && st[0] && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
+    {ev.trophy && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins a trophy when the game is completed</div>}
+    {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> Trophy: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
+    {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td>{s.name}{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
     <p className="muted small">Ranked by wins, then point differential, then points scored. Playoff games not included.</p>
   </div>;
 }
@@ -517,7 +520,7 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
 
 function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; act: Act; refresh: () => void; loading: boolean }) {
   const [me, setMeS] = useState(S.getMe(code)); const [ask, setAsk] = useState(false); const [starting, setStarting] = useState(false);
-  const [pickC, setPickC] = useState<number[]>([]);
+  const [pickC, setPickC] = useState<number[]>([]); const [icFor, setIcFor] = useState('');
   const openStart = () => { setPickC(courtList(ev)); setAsk(true); };
   const start = () => { const cs = pickC.length ? pickC : courtList(ev); setAsk(false); if (starting) return; setStarting(true); const stamp = Date.now();
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
@@ -552,10 +555,11 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {club && <ClubTeams ev={ev} act={act} edit={org} />}
     {!me && full && <FullCard ev={ev} onPick={pick} />}
     {!me && !full && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }).then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) pick(p.id); else if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
-    {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button></div>}
+    {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button> <button className="ghost small" onClick={() => setIcFor(ev.players.find(p => p.id === me)!.name)}>Set icon</button></div>}
+    {icFor && <IconEditor name={icFor} onClose={() => setIcFor('')} />}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
-    <ul className="lobbyList">{joined.map(p => <li key={p.id} className={'lobbyRow' + (p.id === me ? ' on' : '')}><span className="grow">{p.name}{p.id === me && <span className="tag">You</span>}</span>
+    <ul className="lobbyList">{joined.map(p => <li key={p.id} className={'lobbyRow' + (p.id === me ? ' on' : '')}><span className="grow"><Avatar name={p.name} /> {p.name}{p.id === me && <span className="tag">You</span>}</span>
       {p.id === me ? <button className="ghost small danger dropBtn" onClick={() => drop(p.id, p.name, true)}>Drop out</button>
         : org && <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name, false)}>✕</button>}</li>)}</ul>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
@@ -572,12 +576,49 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   </div>;
 }
 
+function useIcons() { const [, f] = useState(0); useEffect(() => { const u = S.onIcons(() => f(x => x + 1)); S.loadIcons(); return u; }, []); return S.iconsNow(); }
+function Avatar({ name, size = 26 }: { name: string; size?: number }) {
+  const ic = useIcons()[S.iconKey(name)]; const st = { width: size, height: size, minWidth: size, fontSize: Math.round(size * (name.length ? 0.42 : 0.6)), whiteSpace: 'nowrap' as const, overflow: 'hidden' };
+  const ini = name.trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase();
+  if (ic?.photo) return <img className="av" style={st} src={S.photoUrl(S.iconKey(name), ic.v)} alt="" aria-hidden="true" data-icon="photo" loading="lazy" />;
+  if (ic?.icon && S.ICONS[ic.icon]) return <span className="av avIcon" style={st} aria-hidden="true" data-icon={ic.icon} data-g={S.ICONS[ic.icon]} />;
+  return <span className="av avInit" style={st} aria-hidden="true" data-icon="none" data-g={ini} />;
+}
+/** Resize/crop to a 256px square JPEG on the phone before upload. */
+async function toPhoto(f: File): Promise<string> {
+  const img = await createImageBitmap(f); const c = document.createElement('canvas'); c.width = c.height = 256;
+  const sz = Math.min(img.width, img.height); c.getContext('2d')!.drawImage(img, (img.width - sz) / 2, (img.height - sz) / 2, sz, sz, 0, 0, 256, 256);
+  for (const qy of [0.82, 0.7, 0.55, 0.4]) { const d = c.toDataURL('image/jpeg', qy); if (d.length <= 110000) return d; }
+  throw new Error('too big');
+}
+function IconEditor({ name, onClose }: { name: string; onClose: () => void }) {
+  const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
+  const save = async (v: { icon?: string; photo?: string }) => { setBusy(true); setMsg(''); const r = await S.setIcon(name, v); setBusy(false);
+    if (r === 'ok') onClose(); else setMsg(r === 'notOwner' ? `${name}'s icon was set on another phone. Only that phone (or the club admin) can change it.` : "Couldn't save (offline?). Try again."); };
+  return <div className="sheetBg" onClick={onClose}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="ic-t" onClick={e => e.stopPropagation()}>
+    <h2 id="ic-t"><Avatar name={name} size={40} /> Icon for {name}</h2>
+    <p className="muted small">The first phone to set this name's icon owns it; only that phone can change it later.</p>
+    <div className="iconGrid">{Object.entries(S.ICONS).map(([id, g]) => <button key={id} type="button" className="chip iconPick" aria-label={'Icon ' + id} disabled={busy} onClick={() => save({ icon: id })}>{g}</button>)}</div>
+    <label className="big uploadBtn">Upload photo<input type="file" accept="image/*" aria-label="Upload photo" hidden disabled={busy} onChange={async e => { const f = e.target.files?.[0]; if (!f) return; try { await save({ photo: await toPhoto(f) }); } catch { setMsg("That photo couldn't be used. Try another."); } }} /></label>
+    {msg && <p className="warn" role="alert">{msg}</p>}
+    {S.adminKey() && <button className="big danger" onClick={async () => { await S.resetIcon(name); onClose(); }}>Reset icon (admin)</button>}
+    <button className="big" onClick={onClose}>Close</button></div></div>;
+}
+function AdminKey() {
+  const [on, setOn] = useState(!!S.adminKey());
+  return <button className="ghost small adminBtn" onClick={async () => { if (on) { if (confirm('Turn off club admin on this phone?')) { localStorage.removeItem('pb:admin'); setOn(false); } return; }
+    const k = prompt('Club admin key'); if (!k) return; if (await S.checkAdmin(k.trim())) { localStorage.setItem('pb:admin', k.trim()); setOn(true); } else alert('That key is not valid.'); }}>{on ? 'Club admin: on' : 'Club admin'}</button>;
+}
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
-  useEffect(() => { setErr(false); if (name) { setHist(null); S.statsPlayer(name).then(setHist).catch(() => setErr(true)); } S.statsBoard().then(setBoard).catch(() => setErr(true)); }, [name]);
+  const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false);
+  useEffect(() => { setErr(false); if (name) { setHist(null); S.statsPlayer(name).then(setHist).catch(() => setErr(true)); S.playerTrophies(name).then(setTro).catch(() => {}); } S.statsBoard().then(setBoard).catch(() => setErr(true)); }, [name]);
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
     return <div className="page"><Header title={st?.name || name} back="stats" />
-      {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
+      <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
+      {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
+      {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Trophies', st.trophies || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
+      {tro.length > 0 && <><h2>Trophies</h2><ul className="trophyList">{tro.map(t => <li key={t.code} className="card"><span aria-hidden="true">🏆</span> <b>{t.ev_name}</b> <span className="muted small">{fmtWhen(t.date).date} · {t.w}W, {t.diff > 0 ? '+' : ''}{t.diff}</span></li>)}</ul></>}
       <h2>Match history</h2>{err && <p className="warn">Couldn't load stats (offline?).</p>}{!hist && !err && <p className="muted">Loading…</p>}
       {hist?.length === 0 && <p className="muted">No scored games yet.</p>}
       {hist?.map(m => { const onA = m.an.some(x => x.toLowerCase() === k); const mine = onA ? m.an : m.bn, opp = onA ? m.bn : m.an; const pf = onA ? m.sa : m.sb, pa = onA ? m.sb : m.sa; const won = pf > pa; const d = fmtWhen(m.date);
@@ -588,8 +629,9 @@ function Stats({ name }: { name?: string }) {
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
     {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
-      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn">{b.name}</button></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
+      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button>{b.trophies ? <span className="trophyBadge" aria-label={b.trophies + ' trophies'}>🏆{b.trophies > 1 ? b.trophies : ''}</span> : null}</td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
+    <AdminKey />
   </div>;
 }
 

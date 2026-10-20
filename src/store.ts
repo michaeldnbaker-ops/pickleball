@@ -61,7 +61,7 @@ export async function listEvents(): Promise<Listed[]> {
 }
 export const testMode = () => LS.getItem('pb:hidden') === '1';
 
-export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number }
+export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number }
 export interface StatMatch { id: string; code: string; ev_name: string; date: string; an: string[]; bn: string[]; sa: number; sb: number }
 const q = () => (testMode() ? '&test=1' : '');
 export async function statsBoard(): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
@@ -77,3 +77,37 @@ export async function deleteRemote(code: string) {
   if (r.status === 409) throw new Error('started'); if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
   LS.removeItem('pb:ev:' + code); LS.removeItem('pb:dirty:' + code);
 }
+
+// ---- Player icons ----
+export const ICONS: Record<string, string> = { paddle: '🏓', ball: '🥎', star: '⭐', fire: '🔥', bolt: '⚡', eagle: '🦅', tiger: '🐯', fox: '🦊', bear: '🐻', turtle: '🐢', cactus: '🌵', wave: '🌊', clover: '🍀', crown: '👑', rocket: '🚀', target: '🎯' };
+export interface IconT { icon: string | null; photo: boolean; v: number }
+export const iconKey = (n: string) => (n || '').trim().replace(/\s+/g, ' ').toLowerCase();
+let icons: Record<string, IconT> = (() => { try { return JSON.parse(LS.getItem('pb:icons') || '{}'); } catch { return {}; } })();
+const subs = new Set<() => void>(); let lastLoad = 0;
+export const iconsNow = () => icons;
+export function onIcons(f: () => void) { subs.add(f); return () => { subs.delete(f); }; }
+export async function loadIcons(force = false) {
+  if (!force && Date.now() - lastLoad < 30000) return; lastLoad = Date.now();
+  try { const r = await fetch(`${API}/icons?x=1${q()}`, { cache: 'no-store' }); if (!r.ok) return; icons = (await r.json()).icons || {}; LS.setItem('pb:icons', JSON.stringify(icons)); subs.forEach(f => f()); } catch { /* offline: cached */ }
+}
+export const photoUrl = (k: string, v: number) => `${API}/icon?k=${encodeURIComponent(k)}&v=${v}`;
+export const adminKey = () => LS.getItem('pb:admin') || '';
+const ah = (): Record<string, string> => adminKey() ? { 'x-admin': adminKey() } : {};
+export const ownsIcon = (name: string) => !!LS.getItem('pb:iconTok:' + iconKey(name));
+/** Set a player's icon (built-in id or JPEG data URL). 'notOwner' = another phone owns this name's icon. */
+export async function setIcon(name: string, v: { icon?: string; photo?: string }): Promise<'ok' | 'notOwner' | 'error'> {
+  const k = iconKey(name);
+  try {
+    const r = await fetch(`${API}/icon?x=1${q()}`, { method: 'PUT', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ name, ...v, token: LS.getItem('pb:iconTok:' + k) || undefined }) });
+    if (r.status === 403) return 'notOwner'; if (!r.ok) return 'error';
+    const b = await r.json(); if (b.token) LS.setItem('pb:iconTok:' + k, b.token);
+    await loadIcons(true); return 'ok';
+  } catch { return 'error'; }
+}
+export async function resetIcon(name: string) {
+  const r = await fetch(`${API}/icon?x=1${q()}`, { method: 'PUT', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ name, reset: true }) });
+  await loadIcons(true); return r.ok;
+}
+export async function checkAdmin(key: string) { const r = await fetch(`${API}/admin`, { headers: { 'x-admin': key }, cache: 'no-store' }); return r.ok && !!(await r.json()).admin; }
+export interface Trophy { code: string; ev_name: string; date: string; w: number; diff: number }
+export async function playerTrophies(name: string): Promise<Trophy[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).trophies || []; }

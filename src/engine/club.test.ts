@@ -33,3 +33,12 @@ describe('Club vs Club', () => {
     expect(standings(e).find(p => p.name === 'H00')).toMatchObject({ w: 1, gp: 1 });
   });
 });
+import { trophyWinners } from './engine';
+describe('Trophy match', () => {
+  it('awards 1st place when finished; ties on wins+diff are co-winners; non-trophy games award nothing', () => {
+    const e = mk(1); startEvent(e); e.rounds[0].matches[0].sa = 11; e.rounds[0].matches[0].sb = 6;
+    e.finished = true; expect(trophyWinners(e)).toEqual([]);
+    e.trophy = true; expect(trophyWinners(e).map(s => s.name).sort()).toEqual(['H00', 'H01']);
+    e.finished = false; expect(trophyWinners(e)).toEqual([]);
+  });
+});
