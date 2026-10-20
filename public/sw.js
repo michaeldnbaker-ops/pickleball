@@ -1,5 +1,5 @@
 // Network-first, never from the HTTP cache, for the app shell; cache fallback only when offline. API calls are not cached.
-const C='pb-v31';
+const C='pb-v32';
 self.addEventListener('install',e=>self.skipWaiting());
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==C)await caches.delete(k);await self.clients.claim();})()));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin)return;

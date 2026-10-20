@@ -911,6 +911,8 @@ test('Player icons: built-in icon or photo, first phone owns it, others refused,
   await expect(page.getByText("You're in as")).toBeVisible();
   await expect(page.locator('.lobbyRow .av')).toHaveAttribute('data-icon', 'none');
   await page.getByRole('button', { name: 'Set icon' }).click(); await page.screenshot({ path: 'e2e/shot-icon-picker.png' });
+  await expect(page.getByLabel('Take photo')).toHaveAttribute('capture', 'user'); await expect(page.getByLabel('Choose photo')).not.toHaveAttribute('capture', /.*/);
+  await expect(page.getByLabel('Take photo')).toHaveAttribute('accept', 'image/*');
   await page.getByRole('button', { name: 'Icon fox' }).click();
   await expect(page.locator('.lobbyRow .av')).toHaveAttribute('data-icon', 'fox');
   // a different phone can't change Ivy's icon
@@ -920,7 +922,7 @@ test('Player icons: built-in icon or photo, first phone owns it, others refused,
   await p2.goto(BASE + '#/e/' + code); await p2.getByPlaceholder('Full name').fill('Max ' + tag); await p2.getByRole('button', { name: 'Join' }).click();
   await expect(p2.locator('.lobbyRow', { hasText: ivy }).locator('.av')).toHaveAttribute('data-icon', 'fox');
   // the owner uploads a photo: resized to 256px JPEG on the phone
-  await page.getByRole('button', { name: 'Set icon' }).click(); await page.getByLabel('Upload photo').setInputFiles('e2e/fixture-photo.png');
+  await page.getByRole('button', { name: 'Set icon' }).click(); await page.getByLabel('Choose photo').setInputFiles('e2e/fixture-photo.png');
   await expect(page.locator('.lobbyRow', { hasText: ivy }).locator('.av')).toHaveAttribute('data-icon', 'photo');
   const img = await request.get(API + '/icon?k=' + encodeURIComponent(ivy.toLowerCase()) + '&v=2'); expect(img.headers()['content-type']).toBe('image/jpeg');
   const jb = await img.body(); expect(jb.length).toBeLessThan(90000); expect(jb.readUInt16BE(jb.indexOf(Buffer.from([0xff, 0xc0])) + 5)).toBe(256);
@@ -964,15 +966,31 @@ test('Trophy match: checkbox at Create; 1st place (wins, then diff; co-winners) 
   await page.reload(); await page.getByRole('button', { name: 'Standings', exact: true }).click();
   await expect(page.locator('.trophyWin')).toContainText(win.join(' & ')); await expect(page.locator('.trophyWin')).toContainText('co-winners');
   await expect(page.locator('tbody tr', { has: page.locator('.trophyBadge') })).toHaveCount(2);
-  await page.screenshot({ path: 'e2e/shot-trophy-standings.png', fullPage: true });
+  await expect(page.locator('.trophyWin')).toContainText('🏆 Winners: ');
+  expect(await page.locator('.trophyWin').evaluate(e => { const p = e.parentElement!; return [...p.children].indexOf(e); })).toBe(0);
   const st = (await (await request.get(API + '/stats?test=1')).json()).players; expect(st.find((p: { k: string }) => p.k === win[0].toLowerCase()).trophies).toBe(1); expect(st.find((p: { k: string }) => p.k === nm(ev.rounds[0].matches[1].a[0]).toLowerCase()).trophies).toBe(0);
-  await page.goto(BASE + '#/stats'); await expect(page.locator('tr', { hasText: win[0] }).locator('.trophyBadge')).toBeVisible();
+  // a second trophy game won by the same player → x2
+  const code2 = 'TS' + tag.toUpperCase(); const w0 = ev.rounds[0].matches[0].a[0];
+  const g2 = { ...lobby, id: code2, name: 'Trophy e2e ' + tag + ' two', courts: 1, totalRounds: 1, players: ps.slice(0, 4).map(p => p.id === 't0' ? ps.find(x => x.id === w0)! : p.id === w0 ? ps[0] : p), active: ['t0', 't1', 't2', 't3'],
+    rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: ['t0', 't1'], b: ['t2', 't3'], sa: 11, sb: 2 }] }], startedAt: 2, startedBy: 'organizer', host: 'organizer', finished: true };
+  g2.players = ps.slice(0, 4).map((p, i) => i === 0 ? { id: 't0', name: nm(w0) } : { id: 't' + i, name: 'X' + i + ' ' + tag }); expect((await request.put(API + '/e/' + code2, { data: { data: g2 } })).ok()).toBe(true);
+  await page.screenshot({ path: 'e2e/shot-trophy-standings.png', fullPage: true });
+  const wn = nm(w0);
+  await page.goto(BASE + '#/stats'); await expect(page.locator('tr', { hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
+  await page.getByRole('tab', { name: /Trophies/ }).click(); const tb = page.locator('.trophyBoard tbody tr');
+  await expect(tb.filter({ hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
+  const counts = await tb.locator('.trophyCount').allTextContents(); const nums = counts.map(t => Number(t.replace(/\D/g, ''))); expect([...nums].sort((a, b) => b - a)).toEqual(nums);
   await page.screenshot({ path: 'e2e/shot-trophy-overall.png', fullPage: true });
-  await page.goto(BASE + '#/stats/' + encodeURIComponent(win[0].toLowerCase())); await expect(page.locator('.trophyList')).toContainText('Trophy e2e ' + tag);
+  await page.screenshot({ path: 'e2e/shot-trophy-leaderboard.png', fullPage: true });
+  await page.goto(BASE + '#/stats/' + encodeURIComponent(wn.toLowerCase())); const tcase = page.getByLabel('Trophy case');
+  await expect(tcase).toContainText('🏆 x2'); await expect(tcase.locator('li')).toHaveCount(2); await expect(tcase).toContainText('Trophy e2e ' + tag + ' two');
+  await expect(page.locator('.playerHead .trophyCount')).toHaveText('🏆 x2');
   await page.screenshot({ path: 'e2e/shot-trophy-player.png', fullPage: true });
   // can't flip trophy after the start
   expect((await request.put(API + '/e/' + code + '?by=organizer&org=1', { data: { data: { ...ev, trophy: false } } })).status()).toBe(409);
-  console.log('TROPHYCODE ' + code);
+  // in-game standings show lifetime trophy counts next to names
+  await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('tr', { hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
+  console.log('TROPHYCODE ' + code + ' ' + code2);
 });
 
 test('Club vs Club join: link opener picks Join as <club>; visitor joined list; joiner takes a visitor spot, creator places another; named visitors count in Overall, guests do not', async ({ page, browser, request }) => {
@@ -1059,7 +1077,7 @@ test('Clubs: pick/add club at Create (saved for everyone, case-insensitive), sta
   // UI: Overall + Past selectors (default Stone Creek)
   await page.goto(BASE + '#/stats'); await page.evaluate(() => localStorage.removeItem('pb:clubView')); await page.reload();
   await expect(page.getByLabel('Club')).toHaveValue('Stone Creek'); await expect(page.locator('tr', { hasText: win })).toHaveCount(0);
-  await page.getByLabel('Club').selectOption(C); await expect(page.locator('tr', { hasText: win }).locator('.trophyBadge')).toBeVisible();
+  await page.getByLabel('Club').selectOption(C); await expect(page.locator('tr', { hasText: win }).locator('.trophyCount')).toHaveText('🏆 x1');
   await page.screenshot({ path: 'e2e/shot-clubs-overall.png', fullPage: true });
   await page.locator('tr', { hasText: win }).click(); await expect(page.locator('.trophyList')).toContainText('Clubs e2e ' + tag); await expect(page.locator('.hist')).toHaveCount(1);
   await page.goto(BASE + '#/past'); await expect(page.getByLabel('Club')).toHaveValue(C); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toBeVisible();

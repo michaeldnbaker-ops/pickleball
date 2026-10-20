@@ -93,6 +93,7 @@ function ClubSelect({ value, onChange, id, label, allowAdd, exclude }: { value: 
       <button className="primary" onClick={save} disabled={!nm.trim()}>Save club</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>}
     {err && <p className="warn">{err}</p>}</div>;
 }
+function TrophyBadge({ n, big }: { n?: number; big?: boolean }) { return n ? <span className={'trophyCount' + (big ? ' big' : '')} aria-label={n + (n === 1 ? ' trophy' : ' trophies')}>🏆 x{n}</span> : null; }
 function useClubView(): [string, (c: string) => void] { const [c, setC] = useState(S.clubView()); return [c, (x: string) => { S.setClubView(x); setC(x); }]; }
 function Past() {
   const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false); const [club, setClub] = useClubView();
@@ -503,16 +504,18 @@ function ClubTeams({ ev, act, edit, me }: { ev: EventT; act: Act; edit: boolean;
 }
 function Standings({ ev, me }: { ev: EventT; me?: string }) {
   const st = standings(ev); const tw = trophyWinners(ev); const twIds = new Set(tw.map(t => t.id));
+  const [tc, setTc] = useState<Record<string, number>>({});
+  useEffect(() => { const c = ev.format === 'club' && ev.club ? ev.club.home : ev.clubName || S.SC; S.statsBoard(c).then(b => setTc(Object.fromEntries(b.filter(x => x.trophies).map(x => [x.k, x.trophies!])))).catch(() => {}); }, [ev.finished, ev.clubName, ev.format, ev.club]);
   const teams = unitSize(ev.format) > 1;
   return <div>
+    {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> {tw.length > 1 ? 'Winners' : 'Winner'}: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
     <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
     {ev.trophy && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins a trophy when the game is completed</div>}
-    {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> Trophy: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
     {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}<TrophyBadge n={tc[s.name.trim().toLowerCase()]} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
     <p className="muted small">Ranked by wins, then point differential, then points scored. Playoff games not included.</p>
   </div>;
 }
@@ -627,7 +630,7 @@ function IconEditor({ name, onClose }: { name: string; onClose: () => void }) {
     <h2 id="ic-t"><Avatar name={name} size={40} /> Icon for {name}</h2>
     <p className="muted small">The first phone to set this name's icon owns it; only that phone can change it later.</p>
     <div className="iconGrid">{Object.entries(S.ICONS).map(([id, g]) => <button key={id} type="button" className="chip iconPick" aria-label={'Icon ' + id} disabled={busy} onClick={() => save({ icon: id })}>{g}</button>)}</div>
-    <label className="big uploadBtn">Upload photo<input type="file" accept="image/*" aria-label="Upload photo" hidden disabled={busy} onChange={async e => { const f = e.target.files?.[0]; if (!f) return; try { await save({ photo: await toPhoto(f) }); } catch { setMsg("That photo couldn't be used. Try another."); } }} /></label>
+    <div className="row photoBtns">{([['Take photo', true], ['Choose photo', false]] as const).map(([l, cam]) => <label key={l} className="big uploadBtn">{cam ? '📷 ' : '🖼️ '}{l}<input type="file" accept="image/*" {...(cam ? { capture: 'user' as const } : {})} aria-label={l} hidden disabled={busy} onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; try { await save({ photo: await toPhoto(f) }); } catch { setMsg("That photo couldn't be used. Try another."); } }} /></label>)}</div>
     {msg && <p className="warn" role="alert">{msg}</p>}
     {S.adminKey() && <button className="big danger" onClick={async () => { await S.resetIcon(name); onClose(); }}>Reset icon (admin)</button>}
     <button className="big" onClick={onClose}>Close</button></div></div>;
@@ -642,13 +645,16 @@ function Stats({ name }: { name?: string }) {
   const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false); const [club, setClub] = useClubView();
   useEffect(() => { setErr(false); setBoard(null); if (name) { setHist(null); S.statsPlayer(name, club).then(setHist).catch(() => setErr(true)); S.playerTrophies(name, club).then(setTro).catch(() => {}); } S.statsBoard(club).then(setBoard).catch(() => setErr(true)); }, [name, club]);
   const picker = <ClubSelect id="stats-club" label="Club" value={club} onChange={setClub} />;
+  const [tab, setTab] = useState<'players' | 'trophies'>('players');
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
     return <div className="page"><Header title={st?.name || name} back="stats" />
-      <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
+      <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><TrophyBadge n={tro.length} big /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
       {picker}
+      <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="trophyCount big">🏆 x{tro.length}</span></div>
+        {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code}><span aria-hidden="true">🏆</span> <b>{t.ev_name}</b> <span className="muted small">{fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></li>)}</ul>
+          : <p className="muted small">No trophies yet{club !== S.SC ? ' for ' + club : ''} — win a Trophy match to earn one.</p>}</div>
       {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
       {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Trophies', st.trophies || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
-      {tro.length > 0 && <><h2>Trophies</h2><ul className="trophyList">{tro.map(t => <li key={t.code} className="card"><span aria-hidden="true">🏆</span> <b>{t.ev_name}</b> <span className="muted small">{fmtWhen(t.date).date} · {t.w}W, {t.diff > 0 ? '+' : ''}{t.diff}</span></li>)}</ul></>}
       <h2>Match history</h2>{err && <p className="warn">Couldn't load stats (offline?).</p>}{!hist && !err && <p className="muted">Loading…</p>}
       {hist?.length === 0 && <p className="muted">No scored games yet.</p>}
       {hist?.map(m => { const onA = m.an.some(x => x.toLowerCase() === k); const mine = onA ? m.an : m.bn, opp = onA ? m.bn : m.an; const pf = onA ? m.sa : m.sb, pa = onA ? m.sb : m.sa; const won = pf > pa; const d = fmtWhen(m.date);
@@ -659,8 +665,12 @@ function Stats({ name }: { name?: string }) {
     {picker}
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
-    {board && board.length > 0 && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
-      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button>{b.trophies ? <span className="trophyBadge" aria-label={b.trophies + ' trophies'}>🏆{b.trophies > 1 ? b.trophies : ''}</span> : null}</td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
+    <div className="row statTabs" role="tablist">{(['players', 'trophies'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} className={'chip ' + (tab === t ? 'on' : '')} onClick={() => setTab(t)}>{t === 'players' ? 'Players' : '🏆 Trophies'}</button>)}</div>
+    {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies).sort((a, b) => b.trophies! - a.trophies! || b.wins - a.wins); return tb.length ? <table className="board trophyBoard"><thead><tr><th>#</th><th>Player</th><th>Trophies</th></tr></thead>
+      <tbody>{tb.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={26} /> {b.name}</button></td><td><TrophyBadge n={b.trophies} big /></td></tr>)}</tbody></table>
+      : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins a trophy.</p></div>; })()}
+    {board && board.length > 0 && tab === 'players' && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
+      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
     <AdminKey />
   </div>;

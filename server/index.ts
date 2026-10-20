@@ -135,7 +135,7 @@ export default {
             , coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club, case when data->>'format'='club' then data->'club'->>'away' end as away
           from events where coalesce((data->>'finished')::boolean,false)=true and (coalesce((data->>'hidden')::boolean,false)=false or $1)
             and (lower(coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek')) = $2 or (data->>'format'='club' and lower(data->'club'->>'away') = $2))
-          order by data->>'date' desc limit 100`, [test, ck(url.searchParams.get('club') || SC)]);
+          order by data->>'date' desc limit ${test ? 300 : 100}`, [test, ck(url.searchParams.get('club') || SC)]);
         return j({ events: rows });
       }
       if (url.pathname === '/stats' && req.method === 'GET') {

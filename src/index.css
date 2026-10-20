@@ -188,3 +188,12 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .clubSelect select{width:100%;font-size:1.05rem;padding:.6rem;border-radius:12px;background:var(--card,#1c2740);color:inherit;border:1px solid #33456b}
 .addClub{gap:.4rem;margin-top:.4rem}.addClub input{flex:1;margin:0}
 .clubTag{margin-left:.4rem;font-size:.72rem;padding:.1rem .45rem;border-radius:999px;background:#2b3a5a;color:#cfe0ff;vertical-align:middle;font-weight:600}
+.photoBtns{gap:.5rem}.photoBtns .uploadBtn{flex:1;margin:0}
+.trophyCount{display:inline-block;margin-left:.35rem;padding:.05rem .45rem;border-radius:999px;background:#3a2f0b;color:#ffd75e;font-weight:800;font-size:.85rem;white-space:nowrap;vertical-align:middle}
+.trophyCount.big{font-size:1.25rem;padding:.2rem .7rem}
+.trophyCase{border-color:#d4a72c}.trophyCase h2{margin:0}
+.trophyCase .trophyList li{padding:.35rem 0;border-top:1px solid #2b3a5a}
+.trophyWin{font-size:1.25rem;font-weight:700;text-align:center;border:2px solid #d4a72c;background:#2a2410}
+.statTabs{gap:.4rem;margin:.5rem 0}
+.trophyCount{flex:none!important;width:auto!important;height:auto!important;min-height:0!important;line-height:1.25!important;align-self:center;display:inline-flex;align-items:center}
+.uploadBtn{border:1px solid #33456b;border-radius:14px;padding:.8rem .5rem;background:#22304d;font-weight:700}
