@@ -139,7 +139,7 @@ export function standings(ev: EventT, includePlayoff = false): Standing[] {
     }
   }
   const seen = new Set(ev.rounds.flatMap(r => [...r.byes, ...r.matches.flatMap(m => [...m.a, ...m.b])]));
-  return [...map.values()].filter(s => s.gp > 0 || ev.active.includes(s.id) || seen.has(s.id) || ev.rounds.length > 0).sort((x, y) => y.w - x.w || y.diff - x.diff || y.pf - x.pf || x.name.localeCompare(y.name));
+  return [...map.values()].filter(s => s.gp > 0 || ev.active.includes(s.id) || seen.has(s.id) || ev.rounds.length > 0).sort((x, y) => pct(y.w, y.gp) - pct(x.w, x.gp) || y.diff - x.diff || y.gp - x.gp || x.name.localeCompare(y.name));
 }
 export function teamStandings(ev: EventT) {
   const ind = new Map(standings(ev).map(s => [s.id, s]));
@@ -463,4 +463,10 @@ export function trophyWinners(ev: EventT) {
   if (!st.length) return [];
   const b = st.reduce((x, s) => s.w > x.w || (s.w === x.w && s.diff > x.diff) ? s : x, st[0]);
   return st.filter(s => s.w === b.w && s.diff === b.diff);
+}
+
+export const pct = (w: number, gp: number) => gp > 0 ? w / gp : -1;
+/** Season/overall ranking: win% desc, diff desc, GP desc, name. */
+export function rankBoard<T extends { name: string; wins: number; games: number; diff: number }>(rows: T[]): T[] {
+  return [...rows].sort((x, y) => pct(y.wins, y.games) - pct(x.wins, x.games) || y.diff - x.diff || y.games - x.games || x.name.localeCompare(y.name));
 }

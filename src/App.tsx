@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -514,9 +514,9 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
     {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
-    <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}<TrophyBadge n={tc[s.name.trim().toLowerCase()]} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
-    <p className="muted small">Ranked by wins, then point differential, then points scored. Playoff games not included.</p>
+    <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>Win%</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}<TrophyBadge n={tc[s.name.trim().toLowerCase()]} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp ? Math.round(100 * s.w / s.gp) + '%' : '–'}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+    <p className="muted small">Ranked by win %, then point differential, then games played. Playoff games not included.</p>
   </div>;
 }
 
@@ -643,7 +643,7 @@ function AdminKey() {
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
   const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false); const [club, setClub] = useClubView();
-  useEffect(() => { setErr(false); setBoard(null); if (name) { setHist(null); S.statsPlayer(name, club).then(setHist).catch(() => setErr(true)); S.playerTrophies(name, club).then(setTro).catch(() => {}); } S.statsBoard(club).then(setBoard).catch(() => setErr(true)); }, [name, club]);
+  useEffect(() => { setErr(false); setBoard(null); if (name) { setHist(null); S.statsPlayer(name, club).then(setHist).catch(() => setErr(true)); S.playerTrophies(name, club).then(setTro).catch(() => {}); } S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => setErr(true)); }, [name, club]);
   const picker = <ClubSelect id="stats-club" label="Club" value={club} onChange={setClub} />;
   const [tab, setTab] = useState<'players' | 'trophies'>('players');
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
@@ -671,6 +671,7 @@ function Stats({ name }: { name?: string }) {
       : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins a trophy.</p></div>; })()}
     {board && board.length > 0 && tab === 'players' && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
       <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
+    {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
     <AdminKey />
   </div>;

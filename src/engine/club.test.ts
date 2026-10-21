@@ -42,3 +42,14 @@ describe('Trophy match', () => {
     e.finished = false; expect(trophyWinners(e)).toEqual([]);
   });
 });
+
+import { rankBoard as rb } from './engine';
+describe('rankBoard', () => {
+  it('win% > diff > GP > name; no min games', () => {
+    const r = rb([
+      { name: 'A', wins: 5, games: 10, diff: 30 }, { name: 'B', wins: 3, games: 4, diff: 2 },
+      { name: 'C', wins: 2, games: 2, diff: 20 }, { name: 'D', wins: 6, games: 8, diff: 2 }, { name: 'E', wins: 3, games: 4, diff: 9 },
+    ]).map(x => x.name);
+    expect(r).toEqual(['C', 'E', 'D', 'B', 'A']);
+  });
+});
