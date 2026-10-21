@@ -56,6 +56,7 @@ export default function App() {
   if (r[0] === 'roster') return <Roster />;
   if (r[0] === 'join') return <Join />;
   if (r[0] === 'past') return <Past />;
+  if (r[0] === 'addpast') return <AddPast code={r[1] ? r[1].toUpperCase() : undefined} />;
   if (r[0] === 'stats') return <Stats name={r[1] ? decodeURIComponent(r[1]) : undefined} />;
   if (r[0] === 'e' && r[1]) return <EventView code={r[1].toUpperCase()} joining={r[2] === 'join'} />;
   return <Home />;
@@ -100,6 +101,7 @@ function Past() {
   useEffect(() => { setList(null); S.listPast(club).then(setList).catch(() => setErr(true)); }, [club]);
   return <div className="page"><Header title="Past matches" back="" />
     <ClubSelect id="past-club" label="Club" value={club} onChange={setClub} />
+    <button className="big secondary addPastBtn" onClick={() => go('addpast')}>+ Add past game</button>
     {err && <p className="warn">Couldn't load past matches (offline?).</p>}{!list && !err && <p className="muted">Loading…</p>}
     {list?.length === 0 && <div className="card empty"><b>No completed matches yet</b><p className="muted">A match shows here once its host ends it.</p></div>}
     {list?.map(g => <GameCard key={g.code} g={{ ...g, rounds: 0 }} onClick={() => { S.setTab(g.code, 'standings'); go('e/' + g.code); }} />)}
@@ -107,7 +109,7 @@ function Past() {
 }
 
 const fmtWhen = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? { day: '', date: '', time: '' } : { day: d.toLocaleDateString([], { weekday: 'long' }), date: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }; };
-function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null; club?: string; away?: string | null }; onClick: () => void; join?: boolean }) {
+function GameCard({ g, onClick, join }: { g: { code: string; name: string; date: string; place?: string; players?: number; rounds?: number; max?: number | null; club?: string; away?: string | null; added_later?: boolean }; onClick: () => void; join?: boolean }) {
   const w = fmtWhen(g.date); const started = (g.rounds ?? 0) > 0; const live = started && new Date(g.date) <= new Date();
   const full = !started && !!g.max && (g.players ?? 0) >= g.max;
   // Started games open (tap your name); full games show Full (still openable by those already in).
@@ -115,7 +117,7 @@ function GameCard({ g, onClick, join }: { g: { code: string; name: string; date:
   return <button className="card tap game" onClick={onClick}>
     <div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div>
     <div className="gInfo"><div className="gTime">{w.day} · {w.time}{live && <span className="live">In progress</span>}</div>
-      <div className="gName">{g.name}{g.club && S.clubKey(g.club) !== S.clubKey(S.SC) && <span className="clubTag">{g.club}</span>}{g.away && <span className="clubTag">vs {g.away}</span>}</div>
+      <div className="gName">{g.name}{g.club && S.clubKey(g.club) !== S.clubKey(S.SC) && <span className="clubTag">{g.club}</span>}{g.away && <span className="clubTag">vs {g.away}</span>}{g.added_later && <span className="clubTag addedLater">Added later</span>}</div>
       <div className="muted small">{g.place || 'Place TBA'}{g.players != null ? ` · ${g.max && !started ? g.players + '/' + g.max : g.players} players` : ''}</div></div>
     {join ? <span className={'joinPill' + (pill !== 'Join' ? ' pill' + pill : '')}>{pill}</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
 }
@@ -298,6 +300,8 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
   usePullToRefresh(refresh);
+  // Added-later games have no live play: open on Standings (with the Added later note)
+  useEffect(() => { if (ev?.addedLater) setTab(t => t === 'courts' || t === 'me' ? 'standings' : t); }, [ev?.addedLater]);
   useEffect(() => { if (ev && !loading && ensurePlan(JSON.parse(JSON.stringify(ev)))) S.mutate(code, e => { ensurePlan(e); }, ev).then(r => setEv(r.ev)); }, [ev, loading, code]);
   // Serialize writes so a quick second action never re-reads the server before the first one has landed.
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -508,6 +512,7 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
   useEffect(() => { const c = ev.format === 'club' && ev.club ? ev.club.home : ev.clubName || S.SC; S.statsBoard(c).then(b => setTc(Object.fromEntries(b.filter(x => x.trophies).map(x => [x.k, x.trophies!])))).catch(() => {}); }, [ev.finished, ev.clubName, ev.format, ev.club]);
   const teams = unitSize(ev.format) > 1;
   return <div>
+    {ev.addedLater && <PastOwnerBar ev={ev} />}
     {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> {tw.length > 1 ? 'Winners' : 'Winner'}: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
     <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
     {ev.trophy && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins a trophy when the game is completed</div>}
@@ -773,5 +778,55 @@ function SubIn({ ev, act, host }: { ev: EventT; act: Act; host: boolean }) {
         <p className="muted small">Leave blank for Guest (not counted in Overall stats).</p></>}
       <button className="big primary" onClick={save}>{back ? 'Put back in' : 'Sub in'}</button>
       <button className="big" onClick={() => setWho('')}>Cancel</button></div></div>}
+  </div>;
+}
+
+/** Added-later game: note + Edit/Delete for the phone that added it (or club admin). */
+function PastOwnerBar({ ev }: { ev: EventT }) {
+  const can = S.ownsPast(ev.id) || !!S.adminKey(); const [err, setErr] = useState('');
+  return <div className="card addedLaterNote" role="note"><span className="clubTag addedLater">Added later</span> <span className="muted small">Entered after the game was played.</span>
+    {can && <div className="row"><button className="ghost" onClick={() => go('addpast/' + ev.id)}>Edit past game</button>
+      <button className="ghost danger" onClick={async () => { if (!confirm('Delete this past game? Its results come out of the stats.')) return; try { await S.deletePast(ev.id); go('past'); } catch (e) { setErr(String((e as Error).message)); } }}>Delete past game</button></div>}
+    {err && <p className="warn">{err}</p>}</div>;
+}
+type PM = { a: [string, string]; b: [string, string]; court: number; sa: string; sb: string };
+const blankPM = (): PM => ({ a: ['', ''], b: ['', ''], court: 0, sa: '', sb: '' });
+const ymd = (d: Date) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
+/** Add past game: date (past only), club, optional name + trophy, then matches one by one (2 v 2, optional court, scores). Saved closed. */
+function AddPast({ code }: { code?: string }) {
+  const yday = ymd(new Date(Date.now() - 864e5));
+  const [date, setDate] = useState(''); const [club, setClub] = useState(S.clubView() || S.SC); const [name, setName] = useState(''); const [trophy, setTrophy] = useState(false);
+  const [ms, setMs] = useState<PM[]>([blankPM()]); const [names, setNames] = useState<string[]>([]); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [loaded, setLoaded] = useState(!code);
+  useEffect(() => { S.statsBoard(club).then(b => setNames(b.map(x => x.name))).catch(() => {}); }, [club]);
+  useEffect(() => { if (!code) return; S.fetchRemote(code).then(e => { if (!e || !e.addedLater) { setErr('Past game not found.'); return; } const nm = (id: string) => e.players.find(p => p.id === id)?.name || '';
+    setDate(e.date.slice(0, 10)); setClub(e.clubName || S.SC); setName(e.name === 'Past game' ? '' : e.name); setTrophy(!!e.trophy);
+    setMs(e.rounds.flatMap(r => r.matches).map(m => ({ a: [nm(m.a[0]), nm(m.a[1])], b: [nm(m.b[0]), nm(m.b[1])], court: m.court || 0, sa: String(m.sa ?? ''), sb: String(m.sb ?? '') }))); setLoaded(true); }).catch(() => setErr("Couldn't load (offline?).")); }, [code]);
+  const used = [...new Set([...names, ...ms.flatMap(m => [...m.a, ...m.b]).map(x => x.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+  const upd = (i: number, f: (m: PM) => void) => setMs(xs => xs.map((m, j) => { if (j !== i) return m; const c = { ...m, a: [...m.a] as [string, string], b: [...m.b] as [string, string] }; f(c); return c; }));
+  // Typed name matches an existing one in a different case → use the existing spelling (avoids duplicate players).
+  const order = [...names, ...ms.flatMap(m => [...m.a, ...m.b]).map(x => x.trim().replace(/\s+/g, ' ')).filter(Boolean)]; // saved names first, then first spelling typed
+  const canon = (v: string) => { const t = v.trim().replace(/\s+/g, ' '); return order.find(u => u.toLowerCase() === t.toLowerCase()) || t; };
+  const problem = (m: PM, i: number) => { const ps = [...m.a, ...m.b].map(x => x.trim()); if (ps.some(x => !x)) return `Match ${i + 1}: enter all 4 players.`; if (new Set(ps.map(x => x.toLowerCase())).size < 4) return `Match ${i + 1}: 4 different players.`;
+    const a = +m.sa, b = +m.sb; if (m.sa === '' || m.sb === '' || !Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0 || a > 99 || b > 99) return `Match ${i + 1}: enter both scores.`; if (a === b) return `Match ${i + 1}: scores can't tie.`; return ''; };
+  const save = async () => { setErr('');
+    if (!date || date > yday) return setErr('Pick a past date.'); for (let i = 0; i < ms.length; i++) { const p = problem(ms[i], i); if (p) return setErr(p); }
+    const g: S.PastGame = { date, club, name: name.trim(), trophy, matches: ms.map(m => ({ a: [canon(m.a[0]), canon(m.a[1])], b: [canon(m.b[0]), canon(m.b[1])], court: m.court || undefined, sa: +m.sa, sb: +m.sb })) };
+    setBusy(true); try { if (code) { await S.updatePast(code, g); S.setTab(code, 'standings'); go('e/' + code); } else { const c = await S.addPast(g); S.setTab(c, 'standings'); go('e/' + c); } } catch (e) { setErr("Couldn't save: " + (e as Error).message); } finally { setBusy(false); } };
+  const pin = (i: number, side: 'a' | 'b', k: 0 | 1, label: string) => <input aria-label={`Match ${i + 1} ${label}`} list="pastNames" placeholder="Player name" maxLength={40} autoComplete="off" value={ms[i][side][k]} onChange={e => upd(i, m => { m[side][k] = e.target.value; })} onBlur={e => upd(i, m => { m[side][k] = canon(e.target.value); })} />;
+  if (!loaded) return <div className="page"><Header title="Edit past game" back="past" />{err ? <p className="warn">{err}</p> : <p className="muted">Loading…</p>}</div>;
+  return <div className="page addPast"><Header title={code ? 'Edit past game' : 'Add past game'} back="past" />
+    <p className="muted small">For games played before the app or missed. Saved as a completed game: it shows in Past matches (marked “Added later”) and counts in that club’s stats and trophies.</p>
+    <label htmlFor="past-date">Date played</label><input id="past-date" type="date" max={yday} value={date} onChange={e => setDate(e.target.value)} />
+    <ClubSelect id="addpast-club" label="Club" value={club} onChange={setClub} allowAdd />
+    <label htmlFor="past-name">Name (optional)</label><input id="past-name" maxLength={60} placeholder="e.g. Friday open play" value={name} onChange={e => setName(e.target.value)} />
+    <label className="row check"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> Trophy match (1st place gets a trophy)</label>
+    <datalist id="pastNames">{used.map(n => <option key={n} value={n} />)}</datalist>
+    {ms.map((m, i) => <div key={i} className="card pastMatch"><div className="row between"><b>Match {i + 1}</b>{ms.length > 1 && <button className="ghost danger small" aria-label={`Remove match ${i + 1}`} onClick={() => setMs(xs => xs.filter((_, j) => j !== i))}>✕</button>}</div>
+      <div className="pmTeams"><div><div className="muted small">Team 1</div>{pin(i, 'a', 0, 'Team 1 player 1')}{pin(i, 'a', 1, 'Team 1 player 2')}<input aria-label={`Match ${i + 1} Team 1 score`} inputMode="numeric" placeholder="Score" value={m.sa} onChange={e => upd(i, x => { x.sa = e.target.value.replace(/\D/g, '').slice(0, 2); })} /></div>
+        <div><div className="muted small">Team 2</div>{pin(i, 'b', 0, 'Team 2 player 1')}{pin(i, 'b', 1, 'Team 2 player 2')}<input aria-label={`Match ${i + 1} Team 2 score`} inputMode="numeric" placeholder="Score" value={m.sb} onChange={e => upd(i, x => { x.sb = e.target.value.replace(/\D/g, '').slice(0, 2); })} /></div></div>
+      <label className="small">Court (optional) <select aria-label={`Match ${i + 1} court`} value={m.court} onChange={e => upd(i, x => { x.court = +e.target.value; })}><option value={0}>–</option>{[1, 2, 3, 4].map(c => <option key={c} value={c}>{courtName(c)}</option>)}</select></label></div>)}
+    {ms.length < 40 && <button className="big secondary" onClick={() => setMs(xs => [...xs, { ...blankPM(), a: [...xs[xs.length - 1].a] as [string, string], b: [...xs[xs.length - 1].b] as [string, string] }])}>+ Add match</button>}
+    {err && <p className="warn" role="alert">{err}</p>}
+    <button className="big primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : code ? 'Save changes' : 'Save past game'}</button>
   </div>;
 }

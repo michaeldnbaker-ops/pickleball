@@ -197,3 +197,11 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .statTabs{gap:.4rem;margin:.5rem 0}
 .trophyCount{flex:none!important;width:auto!important;height:auto!important;min-height:0!important;line-height:1.25!important;align-self:center;display:inline-flex;align-items:center}
 .uploadBtn{border:1px solid #33456b;border-radius:14px;padding:.8rem .5rem;background:#22304d;font-weight:700}
+.addPastBtn{width:100%;margin:.6rem 0}
+.addedLater{background:#5a4a2b;color:#ffe9c2}
+.addedLaterNote{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
+.addedLaterNote .row{width:100%;gap:.5rem}
+.addPast label{display:block;margin-top:.7rem}
+.addPast label.check{display:flex;gap:.5rem;align-items:center}
+.pastMatch .pmTeams{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin:.4rem 0}
+.pastMatch .pmTeams input{width:100%;margin-bottom:.35rem;box-sizing:border-box}

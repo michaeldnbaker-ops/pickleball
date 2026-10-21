@@ -52,7 +52,7 @@ export async function mutate(code: string, fn: (e: EventT) => void, current: Eve
   try { await pushRemote(code, ev); saveLocal(code, ev, false); return { ev, online: true }; } catch (e) { if (e instanceof StartedError) return rejected(code, base); return { ev, online: false }; }
 }
 
-export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number; max?: number | null; club?: string; away?: string | null }
+export interface Listed { code: string; name: string; date: string; place: string; format: string; players: number; rounds: number; max?: number | null; club?: string; away?: string | null; added_later?: boolean }
 /** Public upcoming games not yet started, soonest first (hides events more than a day past). */
 export async function listEvents(): Promise<Listed[]> {
   const d = new Date(Date.now() - 864e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -126,3 +126,21 @@ export async function addClub(name: string): Promise<string> {
 }
 export const clubView = () => LS.getItem('pb:clubView') || SC;
 export const setClubView = (c: string) => LS.setItem('pb:clubView', c);
+
+/** Add past game: one match = Team 1 vs Team 2 (names), optional court 1–4, scores. */
+export interface PastMatch { a: [string, string]; b: [string, string]; court?: number; sa: number; sb: number }
+export interface PastGame { date: string; club: string; name: string; trophy: boolean; matches: PastMatch[] }
+export const ownsPast = (code: string) => !!LS.getItem('pb:pastTok:' + code);
+const pastErr = async (r: Response) => { let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch { /* keep */ } return new Error(m); };
+export async function addPast(g: PastGame): Promise<string> {
+  const r = await fetch(`${API}/past-game?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(g) });
+  if (!r.ok) throw await pastErr(r); const b = await r.json(); LS.setItem('pb:pastTok:' + b.code, b.token); return b.code;
+}
+export async function updatePast(code: string, g: PastGame) {
+  const r = await fetch(`${API}/past-game/${code}?x=1${q()}`, { method: 'PUT', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ ...g, token: LS.getItem('pb:pastTok:' + code) || undefined }) });
+  if (!r.ok) throw await pastErr(r); LS.removeItem('pb:ev:' + code); LS.removeItem('pb:dirty:' + code);
+}
+export async function deletePast(code: string) {
+  const r = await fetch(`${API}/past-game/${code}?x=1${q()}`, { method: 'DELETE', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ token: LS.getItem('pb:pastTok:' + code) || undefined }) });
+  if (!r.ok && r.status !== 404) throw await pastErr(r); LS.removeItem('pb:pastTok:' + code); LS.removeItem('pb:ev:' + code); LS.removeItem('pb:dirty:' + code);
+}

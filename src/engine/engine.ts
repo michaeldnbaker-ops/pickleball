@@ -6,6 +6,8 @@ export interface Club { home: string; away: string; n: number; homeTeams: string
 export interface Match { court: number; a: string[]; b: string[]; sa?: number; sb?: number; team?: [string, string] }
 export interface Round { n: number; matches: Match[]; byes: string[]; playoff?: boolean }
 export interface EventT {
+  /** Entered after the fact with Add past game (closed on save; edit/delete via /past-game). */
+  addedLater?: boolean;
   id: string; name: string; date: string; place: string; format: Format;
   courts: number; totalRounds: number; balanceDupr: boolean; seeding: 'random' | 'dupr';
   players: Player[]; active: string[];

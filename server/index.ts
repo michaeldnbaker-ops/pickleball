@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { closeEvent } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
+import { buildPast } from './past';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
@@ -132,7 +133,7 @@ export default {
         // Completed matches, newest first: open one to see its final standings (read-only).
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds
-            , coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club, case when data->>'format'='club' then data->'club'->>'away' end as away
+            , coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club, case when data->>'format'='club' then data->'club'->>'away' end as away, coalesce((data->>'addedLater')::boolean,false) as added_later
           from events where coalesce((data->>'finished')::boolean,false)=true and (coalesce((data->>'hidden')::boolean,false)=false or $1)
             and (lower(coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek')) = $2 or (data->>'format'='club' and lower(data->'club'->>'away') = $2))
           order by data->>'date' desc limit ${test ? 300 : 100}`, [test, ck(url.searchParams.get('club') || SC)]);
@@ -207,6 +208,36 @@ export default {
         } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
         return j({ ok: true, deleted: n });
       }
+      if (url.pathname === '/past-game' && req.method === 'POST') {
+        // Add past game: anyone; saved closed (counts in stats/trophies like a normal game). The adding phone gets a secret token to edit/delete it.
+        await ensureStats(); const text = await req.text(); if (text.length > 100_000) return j({ error: 'too large' }, 413);
+        const b = JSON.parse(text || '{}'); if (test) b.hidden = true; else delete b.hidden;
+        // Abuse cap: at most 20 real past games added per hour across the club (test mode has its own bucket).
+        const recent = await pool.query("select count(*)::int n from events where coalesce((data->>'addedLater')::boolean,false) and (data->>'createdAt')::bigint > $2 and coalesce((data->>'hidden')::boolean,false) = $1", [!!b.hidden, Date.now() - 3600e3]);
+        if (recent.rows[0].n >= (b.hidden ? 300 : 20)) return j({ error: 'too many past games added this hour; try later' }, 429);
+        const token = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(x => x.toString(16).padStart(2, '0')).join('');
+        const code = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(x => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[x % 32]).join('');
+        const r = buildPast(b, ctLocal(Date.now()).slice(0, 10), code, await sha(token), Date.now()); if (r.error) return j({ error: r.error }, 400);
+        const ins = await pool.query('insert into events(code,data) values($1,$2) on conflict do nothing', [code, JSON.stringify(r.ev)]); if (!ins.rowCount) return j({ error: 'retry' }, 409);
+        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev);
+        return j({ ok: true, code, token });
+      }
+      const pg = url.pathname.match(/^\/past-game\/([A-Za-z0-9]{4,16})$/);
+      if (pg && (req.method === 'PUT' || req.method === 'DELETE')) {
+        // Edit/delete an added-later game: only the phone that added it (token) or the admin key. Normal games can never be touched here.
+        await ensureStats(); const code = pg[1].toUpperCase(); const text = await req.text(); if (text.length > 100_000) return j({ error: 'too large' }, 413);
+        const b = JSON.parse(text || '{}'); const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as (Ev & { addedLater?: boolean; ownerHash?: string; createdAt?: number }) | undefined;
+        if (!cur || !cur.addedLater) return j({ error: 'not found' }, 404);
+        const owner = typeof b.token === 'string' && b.token.length >= 32 && !!cur.ownerHash && (await sha(b.token)) === cur.ownerHash;
+        if (!owner && !(await isAdmin(req))) return j({ error: 'not owner' }, 403);
+        if (req.method === 'DELETE') {
+          await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]);
+          await pool.query("delete from events where code=$1 and coalesce((data->>'addedLater')::boolean,false)", [code]); return j({ ok: true, deleted: code });
+        }
+        b.hidden = !!cur.hidden; const r = buildPast(b, ctLocal(Date.now()).slice(0, 10), code, cur.ownerHash || '', cur.createdAt || Date.now()); if (r.error) return j({ error: r.error }, 400);
+        await pool.query("update events set data=$2, version=version+1, updated_at=now() where code=$1 and coalesce((data->>'addedLater')::boolean,false)", [code, JSON.stringify(r.ev)]);
+        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev); return j({ ok: true, code });
+      }
       if (url.pathname === '/admin' && req.method === 'GET') { await ensureStats(); return j({ admin: await isAdmin(req) }); }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);
       if (!m) return j({ ok: true, service: 'pickleball' });
@@ -214,6 +245,7 @@ export default {
       if (req.method === 'GET') {
         await purgeStale();
         const { rows } = await pool.query('select data, version, updated_at from events where code=$1', [code]);
+        if (rows[0]?.data?.ownerHash) delete rows[0].data.ownerHash; // edit/delete secret stays server-side
         return rows[0] ? j(rows[0]) : j({ error: 'not found' }, 404);
       }
       if (req.method === 'PUT') {

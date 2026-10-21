@@ -303,7 +303,7 @@ test('sign-up lobby → 10 blocked → start with 12 → host-only end, roster l
   // host ends early from Manage
   await page.waitForTimeout(1000); await p2.getByRole('button', { name: 'Manage', exact: true }).click(); p2.once('dialog', d => d.accept()); await p2.getByRole('button', { name: 'End early' }).click();
   await page.waitForTimeout(1500); await page.getByLabel('Refresh').click(); await expect(page.getByText('Event finished')).toBeVisible();
-  await page.getByRole('button', { name: 'Standings', exact: true }).click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(4).textContent())!.trim();
+  await page.getByRole('button', { name: 'Standings', exact: true }).click(); const gp = (await page.locator('tr', { hasText: winner }).first().locator('td').nth(5).textContent())!.trim();
   // all-time stats
   await page.goto(BASE + '#/stats'); const row = page.locator('tr', { hasText: winner });
   await expect(row).toBeVisible(); await expect(row.locator('td').nth(4)).toHaveText(gp); // same games as the event: edit updated, not duplicated
@@ -425,7 +425,7 @@ test('typed-only scores: empty "–", number pad, auto-advance, any score (15–
   // standings: point differential exactly as typed
   const winA = (await c1.locator('.side').first().locator('.names > div').first().textContent())!.trim();
   await page.getByRole('button', { name: 'Standings', exact: true }).click();
-  const row = page.locator('tbody tr', { hasText: winA }); await expect(row.locator('td').nth(5)).toHaveText('15'); await expect(row.locator('td').nth(6)).toHaveText('13'); await expect(row.locator('td').nth(7)).toHaveText('+2');
+  const row = page.locator('tbody tr', { hasText: winA }); await expect(row.locator('td').nth(6)).toHaveText('15'); await expect(row.locator('td').nth(7)).toHaveText('13'); await expect(row.locator('td').nth(8)).toHaveText('+2');
   await expect(page.getByText('Live · updates as scores are entered')).toBeVisible(); await page.screenshot({ path: 'e2e/shot-match-standings.png' });
   // in progress: not in Overall stats yet
   await page.waitForTimeout(1500); const code = page.url().split('/e/')[1];
@@ -1090,4 +1090,71 @@ test('Test cleanup endpoint: admin key + test mode only', async ({ request }) =>
   expect((await request.post(API + '/test/cleanup?test=1')).status()).toBe(403);
   expect((await request.post(API + '/test/cleanup?test=1', { headers: { 'x-admin': 'not-the-key-0000000000' } })).status()).toBe(403);
   if (process.env.ADMIN_KEY) expect((await request.post(API + '/test/cleanup', { headers: { 'x-admin': process.env.ADMIN_KEY } })).status()).toBe(403); // not without test mode
+});
+
+test('Add past game: closed game with real date, "Added later" in Past, counts in stats/trophies; only the adding phone edits/deletes', async ({ page, browser }) => {
+  page.on('dialog', d => d.accept());
+  const t = Date.now().toString(36).slice(-5); const P = (n: string) => `Pst${t} ${n}`;
+  await page.goto(BASE + '#/past');
+  await page.getByRole('button', { name: '+ Add past game' }).click();
+  await expect(page.getByRole('heading', { name: 'Add past game' })).toBeVisible();
+  // today is refused (past dates only)
+  const today = await page.evaluate(() => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); });
+  expect(await page.locator('#past-date').getAttribute('max')).not.toBe(today);
+  await page.locator('#past-date').fill('2026-09-15');
+  await page.getByLabel('Name (optional)').fill('e2e past ' + t);
+  await page.getByLabel(/Trophy match/).check();
+  const fill = async (i: number, a: string[], b: string[], sa: string, sb: string) => {
+    await page.getByLabel(`Match ${i} Team 1 player 1`).fill(a[0]); await page.getByLabel(`Match ${i} Team 1 player 2`).fill(a[1]);
+    await page.getByLabel(`Match ${i} Team 2 player 1`).fill(b[0]); await page.getByLabel(`Match ${i} Team 2 player 2`).fill(b[1]);
+    await page.getByLabel(`Match ${i} Team 1 score`).fill(sa); await page.getByLabel(`Match ${i} Team 2 score`).fill(sb);
+  };
+  await fill(1, [P('Ann'), P('Bob')], [P('Cy'), P('Di')], '11', '7');
+  await page.getByLabel('Match 1 court').selectOption({ label: 'B' });
+  await page.getByRole('button', { name: '+ Add match' }).click();
+  // new match pre-fills the previous players; typing a different case reuses the existing spelling
+  await expect(page.getByLabel('Match 2 Team 1 player 1')).toHaveValue(P('Ann'));
+  await fill(2, [P('ann').replace('Pst', 'pst'), P('Cy')], [P('Bob'), P('Di')], '11', '11');
+  await page.getByRole('button', { name: 'Save past game' }).click();
+  await expect(page.getByRole('alert')).toContainText("can't tie");
+  await page.getByLabel('Match 2 Team 2 score').fill('4');
+  await page.screenshot({ path: 'e2e/shot-past-form.png', fullPage: true });
+  await page.getByRole('button', { name: 'Save past game' }).click();
+  await expect(page.locator('.addedLaterNote')).toBeVisible();
+  await expect(page.locator('.trophyWin')).toContainText(P('Ann'));
+  await expect(page.getByRole('button', { name: 'Edit past game' })).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-past-standings.png', fullPage: true });
+  const code = page.url().match(/#\/e\/([A-Z0-9]+)/)![1];
+  // Past matches: real date + Added later tag
+  await page.goto(BASE + '#/past');
+  const card = page.locator('.card.game', { hasText: 'e2e past ' + t });
+  await expect(card).toContainText('Sep 15'); await expect(card.locator('.addedLater')).toBeVisible();
+  await page.screenshot({ path: 'e2e/shot-past-list.png', fullPage: true });
+  // Stats: one player per name (case merged), counts like a normal game, trophy credited
+  const st = await (await page.request.get(API + '/stats?test=1&club=Stone%20Creek')).json();
+  const ann = st.players.find((p: { k: string }) => p.k === P('Ann').toLowerCase());
+  expect(ann).toMatchObject({ games: 2, wins: 2, losses: 0, diff: 11, trophies: 1 });
+  expect(st.players.filter((p: { k: string }) => p.k.startsWith(('Pst' + t).toLowerCase())).length).toBe(4);
+  // another phone: read-only (no Edit/Delete), and the API refuses it
+  const ctx2 = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx2); const p2 = await ctx2.newPage();
+  await p2.goto(BASE + '#/e/' + code); await expect(p2.locator('.addedLaterNote')).toBeVisible();
+  await expect(p2.getByRole('button', { name: 'Edit past game' })).toHaveCount(0);
+  expect((await p2.request.delete(API + '/past-game/' + code + '?test=1', { data: { token: 'x'.repeat(48) } })).status()).toBe(403);
+  // normal game path can't alter it
+  expect((await p2.request.put(API + '/e/' + code, { data: { data: { id: code, finished: false, hidden: true } } })).status()).toBe(409);
+  await ctx2.close();
+  // owner edits: match 1 now lost by Ann's team → record and trophy follow
+  await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Edit past game' }).click();
+  await expect(page.getByLabel('Match 1 Team 1 score')).toHaveValue('11');
+  await page.getByLabel('Match 1 Team 1 score').fill('5');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.locator('.addedLaterNote')).toBeVisible();
+  const st2 = await (await page.request.get(API + '/stats?test=1&club=Stone%20Creek')).json();
+  expect(st2.players.find((p: { k: string }) => p.k === P('Ann').toLowerCase())).toMatchObject({ games: 2, wins: 1, losses: 1 });
+  // owner deletes: gone from Past and stats
+  await page.getByRole('button', { name: 'Delete past game' }).click();
+  await expect(page.getByRole('heading', { name: 'Past matches' })).toBeVisible();
+  await expect(page.locator('.card.game', { hasText: 'e2e past ' + t })).toHaveCount(0);
+  const st3 = await (await page.request.get(API + '/stats?test=1&club=Stone%20Creek')).json();
+  expect(st3.players.filter((p: { k: string }) => p.k.startsWith(('Pst' + t).toLowerCase()))).toEqual([]);
 });
