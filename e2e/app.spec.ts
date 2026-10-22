@@ -1158,3 +1158,28 @@ test('Add past game: closed game with real date, "Added later" in Past, counts i
   const st3 = await (await page.request.get(API + '/stats?test=1&club=Stone%20Creek')).json();
   expect(st3.players.filter((p: { k: string }) => p.k.startsWith(('Pst' + t).toLowerCase()))).toEqual([]);
 });
+
+test('stats tables stay one line per cell on narrow phones (3-digit numbers, long names) at 360 and 390 wide', async ({ browser }) => {
+  const big = (k: string, name: string, w: number, l: number, diff: number, tro = 0) => ({ k, name, games: w + l, wins: w, losses: l, pf: 999, pa: 999, diff, events: 3, trophies: tro });
+  const players = [big('a', 'Alexandria Montgomery-Wellington', 100, 0, 123, 12), big('b', 'Jeff Stempel', 100, 100, -123, 3), big('c', 'George N Landrum', 11, 10, 18)];
+  const ids = ['p1', 'p2', 'p3', 'p4'];
+  const ev = { id: 'WIDE01', name: 'wide test', date: '2026-10-01T09:00', place: '', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', finished: true, trophy: true, hidden: true,
+    players: ids.map((id, i) => ({ id, name: ['Alexandria Montgomery-Wellington', 'Jeff Stempel', 'Bob', 'Christopher Bartholomew'][i] })), active: ids, teams: [], rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: ['p1', 'p2'], b: ['p3', 'p4'], sa: 99, sb: 0 }] }] };
+  for (const width of [360, 390]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 800 }, isMobile: true, hasTouch: true }); await markTest(ctx);
+    await ctx.route(API + '/stats?*', r => r.fulfill({ json: { players } }));
+    await ctx.route(API + '/e/WIDE01', r => r.request().method() === 'GET' ? r.fulfill({ json: { data: ev, version: 1 } }) : r.fulfill({ status: 409, json: { error: 'finished' } }));
+    const page = await ctx.newPage();
+    const oneLine = async () => { for (const t of await page.locator('table').all()) for (const td of await t.locator('td:not(:nth-child(2))').all()) {
+      const ok = await td.evaluate(el => { const r = document.createRange(); r.selectNodeContents(el); const ts = [...r.getClientRects()].filter(x => x.width > 0).map(x => x.top + x.height / 2); return Math.max(...ts) - Math.min(...ts) < parseFloat(getComputedStyle(el).fontSize) * 0.9 && el.scrollWidth <= el.clientWidth + 1; });
+      expect(ok, await td.textContent() + ' wraps at ' + width).toBe(true); }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true); };
+    await page.goto(BASE + '#/stats'); await expect(page.locator('table.board')).toBeVisible();
+    await expect(page.locator('table.board')).toContainText('100-100'); await expect(page.locator('table.board')).toContainText('+123'); await expect(page.locator('table.board')).toContainText('100%');
+    await oneLine(); await page.screenshot({ path: `e2e/shot-narrow-stats-${width}.png`, fullPage: true });
+    await page.getByRole('tab', { name: /Trophies/ }).click(); await expect(page.locator('table.trophyBoard')).toBeVisible(); await page.screenshot({ path: `e2e/shot-narrow-trophies-${width}.png`, fullPage: true }); await oneLine();
+    await page.goto(BASE + '#/e/WIDE01'); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('table')).toContainText('99');
+    await oneLine(); await page.screenshot({ path: `e2e/shot-narrow-standings-${width}.png`, fullPage: true });
+    await ctx.close();
+  }
+});

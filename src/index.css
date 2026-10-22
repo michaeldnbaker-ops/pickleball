@@ -42,7 +42,7 @@ button.fmt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:le
 .scorebox input:focus{outline:3px solid var(--sky);outline-offset:-3px}
 .entry{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse;font-size:.95rem;background:var(--card);border-radius:12px;overflow:hidden}th{background:var(--skySoft);font-weight:700}
-th,td{padding:9px 4px;border-bottom:1px solid var(--line);text-align:center;overflow-wrap:anywhere}th:nth-child(2),td:nth-child(2){text-align:left}tr.meRow{background:#2B3A66}
+th,td{padding:9px 4px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}th:nth-child(2),td:nth-child(2){text-align:left}tr.meRow{background:#2B3A66}
 /* bottom tabs */
 .tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;display:flex;background:rgba(30,39,66,.97);backdrop-filter:blur(8px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -2px 10px rgba(0,0,0,.06)}
 .tabs button{flex:1;border:none;border-radius:0;background:none;font-size:.78rem;min-height:64px;padding:4px 2px;color:var(--mut);font-weight:600}
@@ -205,3 +205,10 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .addPast label.check{display:flex;gap:.5rem;align-items:center}
 .pastMatch .pmTeams{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin:.4rem 0}
 .pastMatch .pmTeams input{width:100%;margin-bottom:.35rem;box-sizing:border-box}
+
+/* Stats tables: numbers never wrap; the player name column takes the leftover width and truncates with … */
+table:not(.clubTable) td:nth-child(2),table:not(.clubTable) th:nth-child(2){width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis}
+table:not(.clubTable) td:nth-child(2) .linkBtn{white-space:nowrap;display:block;overflow:hidden;text-overflow:ellipsis}
+.clubTable td:first-child,.clubTable th:first-child{white-space:normal;text-align:left;overflow-wrap:anywhere;width:100%}
+@media (max-width:420px){table{font-size:.85rem}th,td{padding:8px 3px}th{font-size:.75rem}}
+@media (max-width:370px){table{font-size:.8rem}th,td{padding:7px 2px}}
