@@ -1183,3 +1183,25 @@ test('stats tables stay one line per cell on narrow phones (3-digit numbers, lon
     await ctx.close();
   }
 });
+
+test('lobby: creator (or admin) can rename a game before it starts; others cannot; other phones see the new name', async ({ page, browser }) => {
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const code = 'RN' + tag;
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const players = ['Ann', 'Bob', 'Cat', 'Dan'].map((n, i) => ({ id: 'p' + i, name: n }));
+  expect((await page.request.put(API + '/e/' + code + '?org=1', { data: { data: { id: code, name: 'Rename test ' + tag, date: d, place: 'Stone Creek', format: 'rotating', courts: 1, totalRounds: 3, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), hidden: true } } })).ok()).toBe(true);
+  // a player's phone sees no Edit name
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p = await ctx.newPage();
+  await p.goto(BASE + '#/e/' + code); await expect(p.getByRole('heading', { name: 'Rename test ' + tag })).toBeVisible();
+  await expect(p.getByRole('button', { name: 'Edit name' })).toHaveCount(0);
+  // creator's phone renames
+  await page.goto(BASE); await page.evaluate(c => localStorage.setItem('pb:org:' + c, '1'), code); await page.goto(BASE + '#/e/' + code);
+  await page.getByRole('button', { name: 'Edit name' }).click();
+  await page.getByLabel('Game name').fill('Renamed test ' + tag); await page.getByRole('button', { name: 'Save name' }).click();
+  await expect(page.getByRole('heading', { name: 'Renamed test ' + tag })).toBeVisible();
+  const r = await (await page.request.get(API + '/e/' + code)).json(); expect(r.data.name).toBe('Renamed test ' + tag); expect(r.version).toBeGreaterThan(1);
+  await p.reload(); await expect(p.getByRole('heading', { name: 'Renamed test ' + tag })).toBeVisible();
+  // after the start, the option is gone
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible(); await expect(page.getByRole('button', { name: 'Edit name' })).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/shot-rename-after-start.png' }); await ctx.close();
+});

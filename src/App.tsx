@@ -576,9 +576,15 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     try { await S.deleteRemote(code); S.forget(code); go(''); } catch (e) { alert(String(e).includes('started') ? 'This game already started and can no longer be cancelled.' : 'Could not cancel (offline?). Try again.'); } };
   const w = fmtWhen(ev.date); const link = gameLink(code);
   const [sharing, setSharing] = useState(false);
+  // Rename before the start: the creator's phone or an admin. Saved like any other lobby edit (server bumps the version).
+  const canRename = org || !!S.adminKey(); const [renaming, setRenaming] = useState<string | null>(null);
+  const saveName = () => { const n = (renaming || '').trim().replace(/\s+/g, ' ').slice(0, 60); setRenaming(null); if (!n || n === ev.name) return; act(e => { if (!e.rounds.length) e.name = n; }); };
   return <div className="page">
     <header><button className="ghost" onClick={() => go('')} aria-label="Back">‹</button><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · code <b>{code}</b></div></div>
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
+    {canRename && (renaming === null ? <button className="ghost small editName" onClick={() => setRenaming(ev.name)}>Edit name</button>
+      : <div className="card nameEdit"><label htmlFor="lobby-name">Game name</label><input id="lobby-name" autoFocus maxLength={60} value={renaming} onChange={e => setRenaming(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(null); }} />
+        <div className="row"><button className="primary" disabled={!renaming.trim()} onClick={saveName}>Save name</button><button className="ghost" onClick={() => setRenaming(null)}>Cancel</button></div></div>)}
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtsText(ev)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> {full ? 'Full' : 'Signing up'} · <b>{joined.length} joined</b>{cap ? <span className="muted"> · {cap} max</span> : null}</div>
     {org && !club && <div className="card maxEdit"><div className="muted small" id="lobby-max-l">Max players (only you can change this until the game starts)</div>
