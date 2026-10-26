@@ -32,7 +32,7 @@ async function syncStats(code: string, ev: Ev) {
   const guestNames = new Set((ev.players || []).filter((p: { guest?: boolean }) => p.guest).map(p => (p.name || "").trim().toLowerCase()));
   const rows: unknown[][] = []; let po = 0;
   // Clubs: stats go to the game's club (missing = Stone Creek). Club vs Club: side A is the home club, side B the visiting club.
-  const ca = clubOf(ev), cb = ev.format === 'club' && ev.club?.away?.trim() ? ev.club.away.trim() : ca;
+  const ca = clubOf(ev), cb = ev.format === 'club' && ev.club?.away?.trim() ? ev.club.away.trim() : (ev as { awayClub?: string }).awayClub?.trim() || ca;
   for (const r of [...(ev.rounds || []), ...(ev.plan || [])]) {
     const tag = r.playoff ? 'p' + (++po) : 'r' + r.n;
     for (const m of r.matches || []) {
@@ -133,7 +133,7 @@ export default {
         // Completed matches, newest first: open one to see its final standings (read-only).
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds
-            , coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club, case when data->>'format'='club' then data->'club'->>'away' end as away, coalesce((data->>'addedLater')::boolean,false) as added_later
+            , coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club, coalesce(case when data->>'format'='club' then data->'club'->>'away' end, data->>'awayClub') as away, coalesce((data->>'addedLater')::boolean,false) as added_later
           from events where coalesce((data->>'finished')::boolean,false)=true and (coalesce((data->>'hidden')::boolean,false)=false or $1)
             and (lower(coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek')) = $2 or (data->>'format'='club' and lower(data->'club'->>'away') = $2))
           order by data->>'date' desc limit ${test ? 300 : 100}`, [test, ck(url.searchParams.get('club') || SC)]);
@@ -219,7 +219,7 @@ export default {
         const code = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(x => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[x % 32]).join('');
         const r = buildPast(b, ctLocal(Date.now()).slice(0, 10), code, await sha(token), Date.now()); if (r.error) return j({ error: r.error }, 400);
         const ins = await pool.query('insert into events(code,data) values($1,$2) on conflict do nothing', [code, JSON.stringify(r.ev)]); if (!ins.rowCount) return j({ error: 'retry' }, 409);
-        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev);
+        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); if (r.ev!.awayClub) await addClub(r.ev!.awayClub as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev);
         return j({ ok: true, code, token });
       }
       const pg = url.pathname.match(/^\/past-game\/([A-Za-z0-9]{4,16})$/);
@@ -236,7 +236,7 @@ export default {
         }
         b.hidden = !!cur.hidden; const r = buildPast(b, ctLocal(Date.now()).slice(0, 10), code, cur.ownerHash || '', cur.createdAt || Date.now()); if (r.error) return j({ error: r.error }, 400);
         await pool.query("update events set data=$2, version=version+1, updated_at=now() where code=$1 and coalesce((data->>'addedLater')::boolean,false)", [code, JSON.stringify(r.ev)]);
-        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev); return j({ ok: true, code });
+        await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); if (r.ev!.awayClub) await addClub(r.ev!.awayClub as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev); return j({ ok: true, code });
       }
       if (url.pathname === '/admin' && req.method === 'GET') { await ensureStats(); return j({ admin: await isAdmin(req) }); }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);

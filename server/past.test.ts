@@ -20,3 +20,12 @@ describe('add past game (server)', () => {
     expect(e({ matches: Array(41).fill(ok.matches[0]) })).toMatch(/40/);
   });
 });
+
+import { buildPast as bp2 } from './past';
+import { test as t2, expect as e2 } from 'vitest';
+t2('past game: optional visiting club is stored and must differ from home', () => {
+  const ms = [{ a: ['A1', 'A2'], b: ['B1', 'B2'], sa: 15, sb: 5 }];
+  e2(bp2({ date: '2026-01-02', club: 'Stone Creek', away: 'Crossgates', matches: ms }, '2026-10-26', 'X', 'h', 1).ev?.awayClub).toBe('Crossgates');
+  e2(bp2({ date: '2026-01-02', club: 'Stone Creek', matches: ms }, '2026-10-26', 'X', 'h', 1).ev?.awayClub).toBeUndefined();
+  e2(bp2({ date: '2026-01-02', club: 'Stone Creek', away: 'stone creek', matches: ms }, '2026-10-26', 'X', 'h', 1).error).toBe('visiting club must differ');
+});
