@@ -148,6 +148,9 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .startNeed{text-align:center;font-weight:700;color:var(--skyText);background:var(--skySoft);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0}
 .hostOnly{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--skyText);font-weight:600}
 .landLinks{justify-content:center;gap:4px;flex-wrap:wrap}
+.notifyBox{margin-top:18px}.notifyBox .big{white-space:normal}
+.iosHint{background:var(--skySoft);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--fg);font-weight:600;margin:0 0 8px}
+.iosHint b{color:var(--skyText)}
 .liveNote{background:transparent;font-weight:600}
 .createTop{margin:4px 0 8px}
 .joinPill{background:var(--blue,#2E6BB8);color:#fff;font-weight:800;border-radius:999px;padding:8px 16px;align-self:center;white-space:nowrap}

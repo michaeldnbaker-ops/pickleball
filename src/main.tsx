@@ -19,7 +19,7 @@ async function checkVersion() {
     }
   } catch { /* offline */ }
 }
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
 if (location.hostname !== 'localhost') {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
   checkVersion(); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
 }

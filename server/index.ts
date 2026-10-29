@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { closeEvent } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
 import { buildPast } from './past';
+import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
@@ -18,12 +19,15 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
   create table if not exists app_admin(hash text primary key);
   alter table stat_matches add column if not exists ca text; alter table stat_matches add column if not exists cb text;
   alter table trophies add column if not exists club text;
-  create table if not exists clubs(k text primary key, name text not null, hidden boolean not null default false, created_at timestamptz not null default now());`).catch(e => { ready = null; throw e; });
+  create table if not exists clubs(k text primary key, name text not null, hidden boolean not null default false, created_at timestamptz not null default now());
+  create table if not exists push_subs(endpoint text primary key, p256dh text not null, auth text not null, test boolean not null default false, created_at timestamptz not null default now());
+  create table if not exists push_vapid(id int primary key, public_key text not null, private_key text not null);
+  create table if not exists push_inbox(id text primary key, body bytea not null, headers text not null, created_at timestamptz not null default now());`).catch(e => { ready = null; throw e; });
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
 interface X { slot: string; from: number; name: string | null }
-interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; finished?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
+interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
@@ -204,6 +208,8 @@ export default {
           n.icons = (await c.query('delete from player_icons where hidden = true')).rowCount || 0;
           n.clubs = (await c.query('delete from clubs where hidden = true')).rowCount || 0;
           n.games = (await c.query("delete from events where code = any($1::text[]) and coalesce((data->>'hidden')::boolean,false) = true", [codes])).rowCount || 0;
+          n.push = (await c.query('delete from push_subs where test = true')).rowCount || 0;
+          n.inbox = (await c.query('delete from push_inbox')).rowCount || 0;
           await c.query('commit');
         } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
         return j({ ok: true, deleted: n });
@@ -239,6 +245,38 @@ export default {
         await addClub(r.ev!.clubName as string, !!r.ev!.hidden).catch(() => {}); if (r.ev!.awayClub) await addClub(r.ev!.awayClub as string, !!r.ev!.hidden).catch(() => {}); await syncStats(code, r.ev as Ev); return j({ ok: true, code });
       }
       if (url.pathname === '/admin' && req.method === 'GET') { await ensureStats(); return j({ admin: await isAdmin(req) }); }
+      if (url.pathname === '/push/key' && req.method === 'GET') { await ensureStats(); return j({ key: await vapidPublic(pool) }); }
+      if (url.pathname === '/push/subscribe' && (req.method === 'POST' || req.method === 'DELETE')) {
+        await ensureStats(); const b = await req.json().catch(() => ({})) as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+        const endpoint = String(b.endpoint || '');
+        if (req.method === 'DELETE') { if (endpoint) await pool.query('delete from push_subs where endpoint=$1', [endpoint]); return j({ ok: true }); }
+        const p256dh = String(b.keys?.p256dh || ''), authk = String(b.keys?.auth || '');
+        if (!endpointOk(endpoint, test, url.host)) return j({ error: 'bad endpoint' }, 400);
+        if (!/^[A-Za-z0-9_-]{16,200}$/.test(p256dh) || !/^[A-Za-z0-9_-]{10,100}$/.test(authk)) return j({ error: 'bad keys' }, 400);
+        await pool.query('insert into push_subs(endpoint,p256dh,auth,test) values ($1,$2,$3,$4) on conflict (endpoint) do update set p256dh=excluded.p256dh, auth=excluded.auth, test=excluded.test', [endpoint, p256dh, authk, test]);
+        return j({ ok: true });
+      }
+      const catchM = url.pathname.match(/^\/push\/catch\/([A-Za-z0-9]{8,64})$/);
+      if (catchM && req.method === 'POST') {
+        await ensureStats(); const buf = Buffer.from(await req.arrayBuffer()); if (buf.length > 65536) return j({ error: 'too large' }, 413);
+        const headers = JSON.stringify({ authorization: req.headers.get('authorization') || '', encoding: req.headers.get('content-encoding') || '', ttl: req.headers.get('ttl') || '' });
+        await pool.query('insert into push_inbox(id, body, headers) values ($1,$2,$3) on conflict (id) do update set body=excluded.body, headers=excluded.headers, created_at=now()', [catchM[1], buf, headers]);
+        return new Response(null, { status: 201, headers: H });
+      }
+      if (catchM && req.method === 'GET') {
+        await ensureStats(); const { rows } = await pool.query('select body, headers from push_inbox where id=$1', [catchM[1]]);
+        if (!rows[0]) return j({ error: 'not found' }, 404);
+        return j({ headers: JSON.parse(rows[0].headers), body: Buffer.from(rows[0].body).toString('base64') });
+      }
+      if (url.pathname === '/push/test-send' && req.method === 'POST') {
+        if (!test) return j({ error: 'test only' }, 403);
+        await ensureStats(); const b = await req.json().catch(() => ({})) as { name?: string; date?: string; code?: string };
+        const code = String(b.code || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase(); if (!/^[A-Z0-9]{4,16}$/.test(code)) return j({ error: 'bad code' }, 400);
+        const note = noteFor(String(b.name || ''), String(b.date || ''), code);
+        const { rows } = await pool.query('select endpoint, p256dh, auth from push_subs where test=true');
+        const subs = (rows as { endpoint: string; p256dh: string; auth: string }[]).filter(r => endpointOk(r.endpoint, true, url.host));
+        return j({ ok: true, sent: await notifySubs(pool, subs, note), note });
+      }
       const m = url.pathname.match(/^\/e\/([A-Za-z0-9]{4,16})$/);
       if (!m) return j({ ok: true, service: 'pickleball' });
       const code = m[1].toUpperCase();
@@ -306,7 +344,9 @@ export default {
         const { rows } = await pool.query('insert into events(code,data) values($1,$2) on conflict(code) do update set data=excluded.data, version=events.version+1, updated_at=now() returning version, updated_at', [code, JSON.stringify(body.data)]);
         if (body.data) { await ensureStats(); await addClub(body.data.clubName, !!body.data.hidden).catch(() => {}); if (body.data.format === 'club') { await addClub(body.data.club?.home, !!body.data.hidden).catch(() => {}); await addClub(body.data.club?.away, !!body.data.hidden).catch(() => {}); } }
         let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); } } catch (e) { stats = String(e); }
-        return j({ ...rows[0], stats });
+        // New public game: tell everyone who opted in. Hidden test games and edits stay quiet. A slow push service must not block the creator.
+        let push = 0; try { if (shouldNotify(!cur, body.data)) { await ensureStats(); const note = noteFor(String(body.data?.name || ''), String(body.data?.date || ''), code); const { rows: subs } = await pool.query('select endpoint, p256dh, auth from push_subs where test=false'); push = await Promise.race([notifySubs(pool, subs, note), new Promise<number>(res => setTimeout(() => res(0), 8000))]); } } catch { /* still created */ }
+        return j({ ...rows[0], stats, push });
       }
       if (req.method === 'DELETE') {
         // Creator cancels a game that has not started. A started game can never be deleted this way.

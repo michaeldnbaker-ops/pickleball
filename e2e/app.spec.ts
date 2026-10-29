@@ -1246,6 +1246,80 @@ test('join remembers this phone and reuses the canonical player name', async ({ 
   await ctx.close();
 });
 
+test('iPhone shows Add to Home Screen before game notifications', async ({ page }) => {
+  await page.goto(BASE);
+  await expect(page.getByRole('button', { name: 'Notify me when games are created' })).toBeVisible();
+  await expect(page.getByRole('note')).toContainText('Add to Home Screen first');
+  const box = await page.getByRole('button', { name: 'Notify me when games are created' }).boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  await page.getByRole('button', { name: 'Notify me when games are created' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Add to Home Screen first');
+  await expect(page.getByRole('button', { name: 'Turn off notifications' })).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/shot-push-ios-hint.png' });
+});
+
+test('Android can turn game notifications on and off', async ({ browser }) => {
+  test.setTimeout(120000);
+  const ctx = await browser.newContext({ ...devices['Pixel 7'], permissions: ['notifications'] });
+  await markTest(ctx);
+  const page = await ctx.newPage();
+  const denied: string[] = [];
+  page.on('console', m => { if (m.type() === 'error') denied.push(m.text()); });
+  await page.goto(BASE);
+  await expect(page.getByText('Add to Home Screen first')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Notify me when games are created' }).click();
+  const off = page.getByRole('button', { name: 'Turn off notifications' });
+  const err = page.getByRole('alert');
+  await expect(off.or(err)).toBeVisible();
+  if (await err.count()) {
+    const t = (await err.textContent()) || '';
+    console.log('PUSH_UI', t, denied.join(' | '));
+    // This browser has no push service (Playwright's Chrome). A real Android phone subscribes; delivery is covered by the catch test.
+    expect(t).toMatch(/push service not available|incognito|permission denied|not supported/i);
+  }
+  else {
+    await expect(page.getByText("You'll be notified when a game is created.")).toBeVisible();
+    await page.screenshot({ path: 'e2e/shot-push-on.png' });
+    await off.click();
+    await expect(page.getByRole('button', { name: 'Notify me when games are created' })).toBeVisible();
+  }
+  await ctx.close();
+});
+
+test('push delivery: new game name + time, tap target is the game, unsubscribe, hidden games stay quiet', async ({ request }) => {
+  const { createECDH, randomBytes } = await import('node:crypto');
+  const ece = (await import('http_ece')).default as { decrypt: (b: Buffer, p: { version: string; privateKey: ReturnType<typeof createECDH>; authSecret: string }) => Buffer };
+  const id = randomBytes(12).toString('hex');
+  const curve = createECDH('prime256v1'); curve.generateKeys();
+  const p256dh = curve.getPublicKey().toString('base64url');
+  const auth = randomBytes(16).toString('base64url');
+  const endpoint = API + '/push/catch/' + id;
+  expect((await request.post(API + '/push/subscribe?test=1', { data: { endpoint, keys: { p256dh, auth } } })).ok()).toBe(true);
+  const tag = randomBytes(3).toString('hex');
+  const hidden = 'PH' + tag.toUpperCase();
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const ev = { id: hidden, name: 'push hidden ' + tag, date: d, place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), hidden: true };
+  expect((await request.put(API + '/e/' + hidden, { data: { data: ev } })).ok()).toBe(true);
+  expect((await request.get(API + '/push/catch/' + id)).status()).toBe(404);
+  const code = 'PN' + tag.toUpperCase();
+  const sent = await request.post(API + '/push/test-send?test=1', { data: { name: 'Thursday Night ' + tag, date: '2026-10-29T18:30', code } });
+  expect(sent.ok()).toBe(true);
+  expect((await sent.json()).sent).toBeGreaterThanOrEqual(1);
+  const got = await (await request.get(API + '/push/catch/' + id)).json();
+  expect(got.headers.authorization).toContain('vapid');
+  expect(got.headers.encoding).toBe('aes128gcm');
+  const note = JSON.parse(ece.decrypt(Buffer.from(got.body, 'base64'), { version: 'aes128gcm', privateKey: curve, authSecret: auth }).toString());
+  expect(note.title).toBe('Thursday Night ' + tag);
+  expect(note.body).toBe('Thursday, Oct 29 · 6:30 PM');
+  expect(note.url).toBe('https://stonecreekpickleballclub.com/?g=' + code);
+  expect((await request.delete(API + '/push/subscribe?test=1', { data: { endpoint } })).ok()).toBe(true);
+  expect((await request.post(API + '/push/test-send?test=1', { data: { name: 'Nope ' + tag, date: '2026-10-29T19:00', code: 'PX' + tag.toUpperCase() } })).ok()).toBe(true);
+  const still = await (await request.get(API + '/push/catch/' + id)).json();
+  const note2 = JSON.parse(ece.decrypt(Buffer.from(still.body, 'base64'), { version: 'aes128gcm', privateKey: curve, authSecret: auth }).toString());
+  expect(note2.title).toBe('Thursday Night ' + tag);
+  expect((await request.delete(API + '/e/' + hidden)).ok()).toBe(true);
+});
+
 test('lobby: creator (or admin) can rename a game before it starts; others cannot; other phones see the new name', async ({ page, browser }) => {
   const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const code = 'RN' + tag;
   const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';

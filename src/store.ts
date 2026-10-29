@@ -197,6 +197,26 @@ export async function addClub(name: string): Promise<string> {
 export const clubView = () => LS.getItem('pb:clubView') || SC;
 export const setClubView = (c: string) => LS.setItem('pb:clubView', c);
 
+/** VAPID public key (base64url) for PushManager.subscribe. */
+export async function pushPublicKey(): Promise<string> {
+  const r = await fetch(`${API}/push/key`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).key;
+}
+export function pushKeyBytes(b64: string) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+export async function savePushSub(sub: PushSubscription) {
+  const r = await fetch(`${API}/push/subscribe?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sub.toJSON()) });
+  if (!r.ok) { let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch { /* keep */ } throw new Error(m); }
+}
+export async function deletePushSub(endpoint: string) {
+  const r = await fetch(`${API}/push/subscribe?x=1${q()}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint }) });
+  if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+}
+
 /** Add past game: one match = Team 1 vs Team 2 (names), optional court 1–4, scores. */
 export interface PastMatch { a: [string, string]; b: [string, string]; court?: number; sa: number; sb: number }
 export interface PastGame { date: string; club: string; name: string; trophy: boolean; matches: PastMatch[] }

@@ -75,6 +75,59 @@ function Home() {
     </div>
     <div className="row landLinks"><button className="ghost statsLink" onClick={() => go('stats')}><Icon n="stats" /> Overall stats</button>
       <button className="ghost statsLink pastLink" onClick={() => go('past')}><Icon n="list" /> Past matches</button></div>
+    <NotifyGames />
+  </div>;
+}
+
+/** Opt in to a phone notification when someone creates a game. iPhone needs the Home Screen app (iOS 16.4+). */
+function iosNeedsInstall() {
+  if (typeof navigator === 'undefined') return false;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
+  return ios && !standalone;
+}
+function NotifyGames() {
+  const ios = iosNeedsInstall();
+  const [on, setOn] = useState(false); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('');
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    let stop = false;
+    navigator.serviceWorker.ready.then(r => r.pushManager.getSubscription()).then(s => { if (!stop && s) setOn(true); }).catch(() => {});
+    return () => { stop = true; };
+  }, []);
+  const turnOn = async () => {
+    setMsg('');
+    if (ios) { setMsg('Add to Home Screen first'); return; }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) { setMsg("This browser can't receive notifications."); return; }
+    setBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { setMsg('Notifications are blocked. Allow them for this site, then try again.'); return; }
+      await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.ready;
+      const key = await S.pushPublicKey();
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: S.pushKeyBytes(key) });
+      await S.savePushSub(sub);
+      setOn(true);
+    } catch (e) { setMsg("Couldn't turn on notifications. " + ((e as Error).message || 'Try again.')); }
+    finally { setBusy(false); }
+  };
+  const turnOff = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (sub) { await S.deletePushSub(sub.endpoint); await sub.unsubscribe(); }
+      setOn(false);
+    } catch { setMsg("Couldn't turn notifications off. Try again."); }
+    finally { setBusy(false); }
+  };
+  return <div className="notifyBox">
+    {ios && <p className="iosHint" role="note"><b>Add to Home Screen first.</b> On iPhone, tap Share, then Add to Home Screen, and open the app from its icon (iOS 16.4 or later).</p>}
+    {on
+      ? <><p className="muted small" role="status">You'll be notified when a game is created.</p><button className="big" onClick={turnOff} disabled={busy}>Turn off notifications</button></>
+      : <button className="big secondary" onClick={turnOn} disabled={busy}>{busy ? 'Turning on…' : 'Notify me when games are created'}</button>}
+    {msg && <p className="warn" role="alert">{msg}</p>}
   </div>;
 }
 
