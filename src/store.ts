@@ -1,4 +1,5 @@
 import type { EventT, Player } from './engine/engine';
+import { bestNames, normName } from './engine/lobby';
 export const API = 'https://br-weathered-heart-b520ib6i-pbapi.compute.c-7.us-east-2.aws.neon.tech';
 const LS = localStorage;
 export const uid = () => Math.random().toString(36).slice(2, 10);
@@ -16,6 +17,75 @@ export const myEvents = (): { code: string; name: string; date: string }[] => JS
 export const forget = (code: string) => { LS.setItem('pb:list', JSON.stringify(myEvents().filter(e => e.code !== code))); };
 export const getMe = (code: string) => LS.getItem('pb:me:' + code) || '';
 export const setMe = (code: string, id: string) => LS.setItem('pb:me:' + code, id);
+
+// No accounts: this phone remembers the player so the next Join is one tap. Per-game "me" (pb:me:CODE) still says who is checked into that game.
+export interface Who { name: string; dupr?: number }
+const cleanWho = (s: string) => (s || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+const duprOf = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined;
+function readWho(): Who | null {
+  try {
+    const o = JSON.parse(LS.getItem('pb:who') || 'null');
+    const name = cleanWho(typeof o?.name === 'string' ? o.name : '');
+    if (!name || /^guest$/i.test(name)) return null;
+    const dupr = duprOf(o?.dupr);
+    return { name, ...(dupr ? { dupr } : {}) };
+  } catch { return null; }
+}
+/** The player this phone last joined as. Falls back to the latest game it is still checked into. */
+export function getWho(): Who | null {
+  const saved = readWho();
+  if (saved) return saved;
+  for (const e of myEvents()) {
+    const id = getMe(e.code); if (!id) continue;
+    const p = localEvent(e.code)?.players.find(x => x.id === id);
+    if (!p?.name || p.guest || /^guest$/i.test(p.name.trim())) continue;
+    const name = cleanWho(p.name); if (!name) continue;
+    const dupr = duprOf(p.dupr);
+    return { name, ...(dupr ? { dupr } : {}) };
+  }
+  return null;
+}
+/** Remember this player on the phone. Same person keeps a DUPR already saved here when the new one is blank. */
+export function setWho(w: Who) {
+  const name = cleanWho(w.name);
+  if (!name || /^guest$/i.test(name)) return;
+  const prev = readWho();
+  const dupr = duprOf(w.dupr) ?? (prev && normName(prev.name) === normName(name) ? prev.dupr : undefined);
+  LS.setItem('pb:who', JSON.stringify({ name, ...(dupr ? { dupr } : {}) }));
+}
+export function rememberPlayer(p?: { name?: string; dupr?: number; guest?: boolean } | null) {
+  if (!p?.name || p.guest) return;
+  setWho({ name: p.name, dupr: p.dupr });
+}
+/** All-time player spellings for these clubs (most games wins). Empty if offline — join still works. */
+let boardCache: { key: string; at: number; names: string[] } | null = null;
+export async function knownPlayerNames(clubs: string[]): Promise<string[]> {
+  const keys = [...new Set(clubs.map(c => (c || '').trim()).filter(Boolean))];
+  const list = keys.length ? keys : [SC]; const key = list.join('|');
+  if (boardCache && boardCache.key === key && Date.now() - boardCache.at < 60000) return boardCache.names;
+  const boards = await Promise.all(list.map(async c => { try { return { ok: true as const, rows: await statsBoard(c) }; } catch { return { ok: false as const, rows: [] as Stat[] }; } }));
+  const names = bestNames(boards.flatMap(b => b.rows).map(p => ({ name: p.name, games: p.games })));
+  if (boards.some(b => b.ok)) boardCache = { key, at: Date.now(), names };
+  return names;
+}
+const looked = new Map<string, Promise<string | null>>();
+/** Spelling Overall stats already uses for this person (newest scored game). Null if they have none, or offline. Works for any player, not only the top of the board. */
+export function lookupName(typed: string, clubs: string[]): Promise<string | null> {
+  const cleaned = cleanWho(typed); if (!cleaned) return Promise.resolve(null);
+  const list = [...new Set((clubs.length ? clubs : [SC]).map(c => (c || '').trim() || SC))];
+  const ck = list.join('|') + '\n' + cleaned.toLowerCase();
+  const prev = looked.get(ck); if (prev) return prev;
+  const k = cleaned.toLowerCase();
+  const job = (async () => {
+    for (const club of list) {
+      let rows: StatMatch[] = []; try { rows = await statsPlayer(cleaned, club); } catch { continue; }
+      for (const m of rows) for (const n of [...(m.an || []), ...(m.bn || [])]) { const t = (n || '').trim(); if (t.toLowerCase() === k) return t; }
+    }
+    return null;
+  })();
+  looked.set(ck, job); job.then(v => { if (!v) looked.delete(ck); }, () => looked.delete(ck));
+  return job;
+}
 
 export async function fetchRemote(code: string): Promise<EventT | null> {
   const r = await fetch(`${API}/e/${code}`, { cache: 'no-store' });

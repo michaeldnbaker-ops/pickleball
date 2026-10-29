@@ -1184,6 +1184,68 @@ test('stats tables stay one line per cell on narrow phones (3-digit numbers, lon
   }
 });
 
+test('join remembers this phone and reuses the canonical player name', async ({ browser, request }) => {
+  const tag = Math.random().toString(36).slice(2, 6);
+  const canon = 'Pat ' + tag;
+  const seed = 'RS' + tag.toUpperCase(), code = 'RJ' + tag.toUpperCase(), code2 = 'RK' + tag.toUpperCase();
+  const soon = new Date(Date.now() + 45 * 60e3);
+  const d = new Date(soon.getTime() - soon.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+  const ps = [canon, 'Quinn ' + tag, 'Riley ' + tag, 'Row ' + tag].map((name, i) => ({ id: 's' + i, name }));
+  const base = { place: 'Stone Creek', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', teams: [], hidden: true, createdAt: Date.now() };
+  const seeded = await request.put(API + '/e/' + seed, { data: { data: { ...base, id: seed, name: 'Remember seed ' + tag, date: '2026-10-01T09:00', players: ps, active: ps.map(p => p.id), rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: ['s0', 's1'], b: ['s2', 's3'], sa: 11, sb: 7 }] }], startedAt: 1, startedBy: 's0', host: 's0', finished: true } } });
+  expect(seeded.ok()).toBe(true); expect((await seeded.json()).stats).toBe('ok');
+  const statsName = (await (await request.get(API + '/stats/player?test=1&name=' + encodeURIComponent(canon))).json()).matches as { an: string[] }[];
+  expect(statsName.some(m => m.an.includes(canon))).toBe(true);
+  expect((await request.put(API + '/e/' + code, { data: { data: { ...base, id: code, name: 'Remember join ' + tag, date: d, players: [], active: [], rounds: [], maxPlayers: 8 } } })).ok()).toBe(true);
+  expect((await request.put(API + '/e/' + code2, { data: { data: { ...base, id: code2, name: 'Remember next ' + tag, date: d, players: [], active: [], rounds: [], maxPlayers: 8 } } })).ok()).toBe(true);
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p = await ctx.newPage();
+  p.on('dialog', dl => dl.accept());
+  await p.goto(new URL('?g=' + code, BASE).toString());
+  await expect(p.getByText('Add yourself to this game')).toBeVisible();
+  await expect(p.getByLabel('Player name')).toBeFocused();
+  await expect(p.getByRole('button', { name: 'Not you? Change' })).toHaveCount(0);
+  await p.getByLabel('Player name').fill('  ' + canon.toLowerCase().replace(' ', '   ') + '  ');
+  await p.getByLabel('DUPR (optional)').fill('3.75');
+  await p.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect(p.getByText('You\'re in as')).toContainText(canon);
+  expect((await (await p.request.get(API + '/e/' + code)).json()).data.players.map((x: { name: string }) => x.name)).toEqual([canon]);
+  expect(await p.evaluate(() => JSON.parse(localStorage.getItem('pb:who') || '{}'))).toMatchObject({ name: canon, dupr: 3.75 });
+  await p.getByRole('button', { name: 'Drop out' }).click();
+  await expect(p.getByLabel('Player name')).toHaveValue(canon);
+  await expect(p.getByLabel('DUPR (optional)')).toHaveValue('3.75');
+  await expect(p.getByRole('button', { name: 'Not you? Change' })).toBeVisible();
+  await expect(p.getByLabel('Player name')).not.toBeFocused();
+  const joinBtn = p.getByRole('button', { name: 'Join', exact: true });
+  expect((await joinBtn.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect((await p.getByRole('button', { name: 'Not you? Change' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await p.screenshot({ path: 'e2e/shot-join-remember.png' });
+  await joinBtn.click();
+  await expect(p.getByText('You\'re in as')).toContainText(canon);
+  const again = (await (await p.request.get(API + '/e/' + code)).json()).data;
+  expect(again.players.map((x: { name: string }) => x.name)).toEqual([canon]);
+  expect(again.active).toHaveLength(1);
+  await p.getByRole('button', { name: 'Drop out' }).click();
+  await p.getByRole('button', { name: 'Not you? Change' }).click();
+  await expect(p.getByLabel('Player name')).toHaveValue('');
+  await expect(p.getByLabel('DUPR (optional)')).toHaveValue('');
+  await expect(p.getByLabel('Player name')).toBeFocused();
+  const other = 'Sam Shared ' + tag;
+  await p.getByLabel('Player name').fill(other);
+  await p.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect(p.getByText('You\'re in as')).toContainText(other);
+  expect((await (await p.request.get(API + '/e/' + code)).json()).data.players.map((x: { name: string }) => x.name)).toEqual([other]);
+  await p.goto(BASE + '#/join');
+  const card = p.locator('.game', { hasText: 'Remember next ' + tag });
+  await card.scrollIntoViewIfNeeded(); await card.click();
+  await expect(p.getByLabel('Player name')).toHaveValue(other);
+  await expect(p.getByRole('button', { name: 'Not you? Change' })).toBeVisible();
+  await expect(p.getByLabel('Player name')).not.toBeFocused();
+  await p.goto(BASE + '#/new'); await p.getByText('Next: Players').click();
+  await expect(p.getByLabel('Player name')).toHaveValue('');
+  await expect(p.getByRole('button', { name: 'Not you? Change' })).toHaveCount(0);
+  await ctx.close();
+});
+
 test('lobby: creator (or admin) can rename a game before it starts; others cannot; other phones see the new name', async ({ page, browser }) => {
   const tag = Math.random().toString(36).slice(2, 6).toUpperCase(); const code = 'RN' + tag;
   const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';

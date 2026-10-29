@@ -125,6 +125,8 @@ details{margin:8px 0}summary{font-size:1.05rem;font-weight:800;padding:12px 0;cu
 .hScore{font-size:1.25rem;font-weight:900}.linkBtn{all:unset;cursor:pointer;font-weight:700;color:var(--fg);text-decoration:underline dotted;overflow-wrap:anywhere}.board tr.tap{cursor:pointer}
 /* player form */
 .pform label{margin:0 0 6px}.pform .nameInput{width:100%;font-size:1.15rem}
+.pform .nameHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 6px;flex-wrap:wrap}.pform .nameHead label{margin:0}
+button.notYou{font-size:.95rem;min-height:44px;padding:6px 0;color:var(--skyText);text-decoration:underline;text-underline-offset:3px;flex:none;font-weight:700}
 .duprRow{display:flex;align-items:center;gap:10px;margin-top:10px}.duprRow label{margin:0;flex:1;font-size:.9rem}.duprInput{width:120px!important;flex:none;min-height:46px;padding:10px 12px}
 .logoArt{display:inline-block}.logoArt svg{width:100%;height:100%}.ballIcon{width:1.1em;height:1.1em;vertical-align:-.18em}
 .shareRow{gap:10px}.shareRow>button{margin:10px 0}

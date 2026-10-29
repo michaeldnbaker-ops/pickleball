@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
-import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS } from './engine/lobby';
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
 import * as S from './store';
 
@@ -122,7 +122,7 @@ function GameCard({ g, onClick, join }: { g: { code: string; name: string; date:
     {join ? <span className={'joinPill' + (pill !== 'Join' ? ' pill' + pill : '')}>{pill}</span> : <span className="chev" aria-hidden="true">›</span>}</button>;
 }
 
-/** Join: only "Create a game" and the list of upcoming games. Pick a game → Join → enter your name. */
+/** Join: only "Create a game" and the list of upcoming games. Pick a game → your name is already filled in on this phone. */
 function Join() {
   const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false);
   useEffect(() => { S.listEvents().then(setList).catch(() => setErr(true)); }, []);
@@ -174,16 +174,29 @@ function Calendar({ value, onChange }: { value: string; onChange: (d: string) =>
     </div></div>;
 }
 
-function PlayerForm({ onAdd, label = 'Add', autoFocus, big }: { onAdd: (p: Player) => void; label?: string; autoFocus?: boolean; big?: boolean }) {
-  const [name, setName] = useState(''); const [dupr, setDupr] = useState('');
-  const submit = () => { if (!name.trim()) return; const d = Number(dupr); onAdd({ id: S.uid(), name: name.trim(), dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined }); setName(''); setDupr(''); };
-  const idp = useRef(S.uid()).current;
+function PlayerForm({ onAdd, label = 'Add', autoFocus, big, preset, known }: { onAdd: (p: Player, fromMemory?: boolean) => void | Promise<void>; label?: string; autoFocus?: boolean; big?: boolean; preset?: { name: string; dupr?: number } | null; known?: string[] }) {
+  const [name, setName] = useState(preset?.name || ''); const [dupr, setDupr] = useState(preset?.dupr ? String(preset.dupr) : '');
+  const [mine, setMine] = useState(!!preset?.name); const [busy, setBusy] = useState(false); const [edited, setEdited] = useState(false);
+  const alive = useRef(true); const inputRef = useRef<HTMLInputElement>(null); const [idp] = useState(S.uid);
+  useEffect(() => () => { alive.current = false; }, []);
+  // Until they type, show the existing spelling of the remembered name (stats / this game / roster).
+  const shown = !edited && preset?.name && known ? (canonicalName(preset.name, known) || name) : name;
+  const change = () => { setEdited(true); setMine(false); setName(''); setDupr(''); inputRef.current?.focus(); };
+  const submit = async () => {
+    const n = known ? canonicalName(shown, known) : shown.trim(); if (!n || busy) return; setBusy(true);
+    const fromMemory = mine && !!preset?.name && normName(n) === normName(preset.name);
+    const d = Number(dupr);
+    try { await onAdd({ id: S.uid(), name: n, dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined }, fromMemory); }
+    finally { if (alive.current) setBusy(false); }
+    if (!alive.current) return; setEdited(true); setName(''); setDupr(''); setMine(false);
+  };
   return <div className="card pform">
-    <label htmlFor={idp + '-n'}>Player name</label>
-    <input id={idp + '-n'} autoFocus={autoFocus} className="nameInput" placeholder="Full name" autoComplete="name" autoCapitalize="words" maxLength={40} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+    <div className="nameHead"><label htmlFor={idp + '-n'}>Player name</label>
+      {mine && shown.trim() && <button type="button" className="ghost small notYou" onClick={change}>Not you? Change</button>}</div>
+    <input id={idp + '-n'} ref={inputRef} autoFocus={autoFocus && !preset?.name} className="nameInput" placeholder="Full name" autoComplete={preset?.name ? 'off' : 'name'} autoCapitalize="words" maxLength={40} value={shown} onChange={e => { setEdited(true); setName(e.target.value); }} onKeyDown={e => e.key === 'Enter' && submit()} />
     <div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
       <input id={idp + '-d'} className="duprInput" placeholder="e.g. 3.75" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, '').slice(0, 5))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
-    <button className={'primary full' + (big ? ' big' : '')} disabled={!name.trim()} onClick={submit}>{label}</button></div>;
+    <button className={'primary full' + (big ? ' big' : '')} disabled={busy || !shown.trim()} onClick={submit}>{label}</button></div>;
 }
 
 function Roster() {
@@ -310,7 +323,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
   const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId);
-  if (!member && !S.isOrg(code) && !watching && !ev.finished) return <Started ev={ev} code={code} onPick={id => { S.setMe(code, id); setTab('me'); setWatching(true); }} />;
+  if (!member && !S.isOrg(code) && !watching && !ev.finished) return <Started ev={ev} code={code} onPick={id => { const p = ev.players.find(x => x.id === id); if (p) S.rememberPlayer(p); S.setMe(code, id); setTab('me'); setWatching(true); }} />;
   return <div className="page withtabs">
     <header><button className="ghost" onClick={() => go('')}>‹</button><Logo size={34} /><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
       <button className="ghost hdrShare" onClick={() => shareGame(ev, code, () => setSharing(true))} aria-label="Share game"><ShareIcon /></button>
@@ -434,7 +447,7 @@ function ScoreBox({ v, set, label = 'Score', onDone, last }: { v: number | ''; s
 
 function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => string; act?: Act }) {
   const [me, setMeS] = useState(S.getMe(code));
-  const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
+  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer(ev.players.find(x => x.id === id)); };
   if (!me || !ev.players.some(p => p.id === me)) return <div className="card"><h3 className="small muted">The game started — new players can't be added. Already playing? Tap your name</h3>
     <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip" onClick={() => pick(p.id)}>{p.name}</button>)}</div></div>;
   const mine = ev.rounds.map((r, i) => ({ r, i, m: r.matches.find(m => m.a.includes(me) || m.b.includes(me)), bye: r.byes.includes(me) }));
@@ -561,7 +574,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
     act(e => { if (e.rounds.length || !(e.club ? clubReady(e.club) && cs.length === e.club.n : startOk(e.active.length))) return; e.courts = cs.length; e.courtSet = cs; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
-  const pick = (id: string) => { S.setMe(code, id); setMeS(id); };
+  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer((S.localEvent(code) || ev).players.find(x => x.id === id)); };
   // This phone forgets a name that was removed (by the creator) or dropped elsewhere, so it can join again.
   useEffect(() => { if (me && !loading && !ev.players.some(p => p.id === me)) { S.setMe(code, ''); setMeS(''); } }, [me, loading, ev, code]);
   const joined = ev.players.filter(p => ev.active.includes(p.id));
@@ -595,7 +608,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {canStart && !ok && <p className="startNeed" role="status">{club ? 'Fill every home team spot to start (empty visitor spots play as guests)' : `Need 4, 8, 12 or 16 players to start (have ${joined.length})`}</p>}
     {club && <ClubTeams ev={ev} act={act} edit={org} me={me} />}
     {!me && full && <FullCard ev={ev} onPick={pick} />}
-    {!me && !full && <JoinForm ev={ev} onJoin={p => { act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }).then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) pick(p.id); else if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
+    {!me && !full && <JoinForm ev={ev} onJoin={(p, fromMemory) => { const done = act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }); return done.then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) { pick(p.id); return; } const same = fromMemory ? cur?.players.find(x => cur.active.includes(x.id) && normName(x.name) === normName(p.name)) : undefined; if (same) { pick(same.id); return; } if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
     {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button> <button className="ghost small" onClick={() => setIcFor(ev.players.find(p => p.id === me)!.name)}>Set icon</button></div>}
     {icFor && <IconEditor name={icFor} onClose={() => setIcFor('')} />}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
@@ -733,14 +746,39 @@ function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: 
   </div>;
 }
 
-/** Shared-link landing: add yourself first (name focused, optional DUPR, big Join); already-joined names below. */
-function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player) => void; onPick: (id: string) => void }) {
+/** Shared-link landing: name remembered on this phone (pre-filled, one tap). "Not you? Change" for a shared phone. */
+function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player, fromMemory?: boolean) => void | Promise<void>; onPick: (id: string) => void }) {
+  const [who] = useState(() => S.getWho());
+  const [known, setKnown] = useState<string[]>([]);
+  const knownRef = useRef<string[]>([]); const pending = useRef<Promise<void>>(Promise.resolve());
   const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
   const [side, setSide] = useState<'home' | 'away' | ''>('');
   const c = ev.format === 'club' ? ev.club : undefined;
+  const clubs = c ? [c.home, c.away || ''] : [ev.clubName || S.SC];
+  const clubKey = clubs.join('\n');
+  useEffect(() => {
+    let stop = false;
+    const list = clubKey ? clubKey.split('\n') : [S.SC];
+    const job = (async () => {
+      const [board, hit] = await Promise.all([S.knownPlayerNames(list), who?.name ? S.lookupName(who.name, list) : Promise.resolve(null)]);
+      if (stop) return;
+      const ns = hit ? [hit, ...board] : board; knownRef.current = ns; setKnown(ns);
+    })().catch(() => {});
+    pending.current = job;
+    return () => { stop = true; };
+  }, [clubKey, who?.name]);
+  const names = useMemo(() => joinNames(known, joined.map(p => p.name), S.getRoster().map(p => p.name)), [known, joined]);
+  const add = async (p: Player, fromMemory?: boolean) => {
+    await Promise.race([pending.current, new Promise(r => setTimeout(r, 8000))]);
+    const cur = S.localEvent(ev.id) || ev;
+    const hit = await Promise.race([S.lookupName(p.name, clubs), new Promise<null>(r => setTimeout(() => r(null), 8000))]);
+    const list = joinNames(hit ? [hit, ...knownRef.current] : knownRef.current, cur.players.filter(x => cur.active.includes(x.id)).map(x => x.name), S.getRoster().map(x => x.name));
+    const n = canonicalName(p.name, list);
+    await onJoin({ ...p, name: n }, !!(fromMemory && normName(n) === normName(p.name)));
+  };
   return <div className="joinForm"><h2>Add yourself to this game</h2>
     {c && <div className="row joinSide" role="radiogroup" aria-label="Your club">{(['home', 'away'] as const).map(sd => <button key={sd} type="button" role="radio" aria-checked={side === sd} className={'big chip ' + (side === sd ? 'on primary' : '')} onClick={() => setSide(sd)}>Join as {sd === 'home' ? c.home : c.away}</button>)}</div>}
-    {c && !side ? <p className="muted small">Pick your club first.</p> : <PlayerForm autoFocus big label={c ? 'Join as ' + (side === 'home' ? c.home : c.away) : 'Join'} onAdd={p => onJoin(c && side ? { ...p, side } : p)} />}
+    {c && !side ? <p className="muted small">Pick your club first.</p> : <PlayerForm autoFocus big preset={who} known={names} label={c ? 'Join as ' + (side === 'home' ? c.home : c.away) : 'Join'} onAdd={(p, fromMemory) => add(c && side ? { ...p, side } : p, fromMemory)} />}
     {joined.length > 0 && <><h3 className="small muted">Already joined? Tap your name</h3>
       <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
   </div>;

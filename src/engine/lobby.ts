@@ -3,6 +3,31 @@ import type { EventT } from './engine';
 export const normName = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 /** True if someone already in this game (joined) has this name. */
 export const nameTaken = (ev: EventT, name: string) => { const k = normName(name); return !!k && ev.players.some(p => ev.active.includes(p.id) && normName(p.name) === k); };
+/** Spelling already used for this person. First matching known name wins (pass all-time stats first). A new person keeps the cleaned typed name — never a different player's name. */
+export function canonicalName(typed: string, known: string[]): string {
+  const cleaned = (typed || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  const k = normName(cleaned);
+  if (!k) return '';
+  const hit = known.find(n => normName(n) === k);
+  return (hit ? hit.trim() : cleaned).slice(0, 40);
+}
+/** One spelling per person: the name with the most scored games. A tie keeps the earlier spelling. */
+export function bestNames(rows: { name: string; games?: number }[]): string[] {
+  const best = new Map<string, { name: string; games: number }>();
+  for (const p of rows) {
+    const name = (p.name || '').trim(); const k = normName(name); if (!k) continue;
+    const g = p.games || 0; const prev = best.get(k);
+    if (!prev || g > prev.games) best.set(k, { name, games: g });
+  }
+  return [...best.values()].map(x => x.name);
+}
+/** Names a joiner is matched against: all-time stats spelling, then this game, then this phone's roster. */
+export function joinNames(stats: string[], inGame: string[], roster: string[]): string[] {
+  const out: string[] = []; const seen = new Set<string>();
+  const add = (n: string) => { const t = (n || '').trim(); const k = normName(t); if (!k || seen.has(k)) return; seen.add(k); out.push(t); };
+  for (const n of stats) add(n); for (const n of inGame) add(n); for (const n of roster) add(n);
+  return out;
+}
 /** Number of extra entries sharing a name (0 = no duplicates). */
 export const dupCount = (ev: Pick<EventT, 'players' | 'active'>) => { const ps = (ev.players || []).filter(p => (ev.active || []).includes(p.id)); return ps.length - new Set(ps.map(p => normName(p.name))).size; };
 /** Remove a player before the start. Returns false (and changes nothing) once the game has started. */

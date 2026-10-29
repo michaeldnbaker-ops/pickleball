@@ -1,10 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { normName, nameTaken, dupCount, removePlayer } from './lobby';
+import { normName, nameTaken, dupCount, removePlayer, canonicalName, bestNames, joinNames } from './lobby';
 import type { EventT } from './engine';
 const ev = (): EventT => ({ id: 'X', name: 'g', date: '', place: '', courts: 1, format: 'rotating', seeding: 'random', balanceDupr: false, totalRounds: 3, teams: [['a', 'b']], rounds: [],
   players: [{ id: 'a', name: 'Jeff Stempel' }, { id: 'b', name: 'Ian' }, { id: 'c', name: 'jeff  stempel ' }], active: ['a', 'b', 'c'] } as unknown as EventT);
 describe('lobby', () => {
   it('normalizes names', () => { expect(normName('  Jeff   STEMPEL ')).toBe('jeff stempel'); });
+  it('reuses the canonical spelling and never invents a different player', () => {
+    const known = ['Jeff Stempel', 'Ann Lee'];
+    expect(canonicalName('  jeff   STEMPEL ', known)).toBe('Jeff Stempel');
+    expect(canonicalName('ANN  lee', known)).toBe('Ann Lee');
+    expect(canonicalName('  Sam   Lee ', known)).toBe('Sam Lee');
+    expect(canonicalName('Jeff', known)).toBe('Jeff');
+    expect(canonicalName('Jeff S', known)).toBe('Jeff S');
+    expect(canonicalName('   ', known)).toBe('');
+  });
+  it('keeps the existing stats spelling, including the higher-game one when two variants exist', () => {
+    expect(canonicalName('jeff stempel', bestNames([{ name: 'Jeff  Stempel', games: 2 }, { name: 'Jeff Stempel', games: 9 }]))).toBe('Jeff Stempel');
+    expect(canonicalName('JEFF stempel', bestNames([{ name: 'Jeff  Stempel', games: 4 }]))).toBe('Jeff  Stempel');
+    expect(joinNames(['Jeff Stempel'], ['jeff stempel'], ['JEFF STEMPEL'])).toEqual(['Jeff Stempel']);
+    expect(joinNames([], ['Pat Court'], ['Pat Court'])).toEqual(['Pat Court']);
+  });
   it('detects taken names case-insensitively and trimmed', () => { const e = ev(); expect(nameTaken(e, ' JEFF stempel')).toBe(true); expect(nameTaken(e, 'Sam')).toBe(false); expect(nameTaken(e, '  ')).toBe(false); });
   it('counts duplicates', () => { const e = ev(); expect(dupCount(e)).toBe(1); removePlayer(e, 'c'); expect(dupCount(e)).toBe(0); });
   it('removes a player from players, active and pairs before start', () => { const e = ev(); expect(removePlayer(e, 'a')).toBe(true); expect(e.players.map(p => p.id)).toEqual(['b', 'c']); expect(e.active).toEqual(['b', 'c']); expect(e.teams).toEqual([]); });
