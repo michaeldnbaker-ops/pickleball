@@ -747,7 +747,7 @@ function PossibleDupes({ onMerged }: { onMerged: () => void }) {
     setMsg(`Merged into ${done.kept}.`); onMerged(); setPairs(await S.nameDupes());
   };
   return <div className="card dupes"><h2>Possible duplicates</h2>
-    <p className="muted small">These names look like the same player. Merge keeps the name they entered on Join. Nothing changes until you confirm.</p>
+    <p className="muted small">These names look like the same player in one club. A name with no tag is Stone Creek. (FC) is Franco's and is never paired with Stone Creek. Merge keeps the name they entered on Join. Nothing changes until you confirm.</p>
     {pairs.map(d => <div key={d.a + '\n' + d.b} className="dupeRow"><span className="grow"><b>{d.a}</b> and <b>{d.b}</b> <span className="muted small">{whyText[d.why as AliasWhy] || d.why}. Will keep {d.kept}.</span></span>
       <button className="primary" onClick={() => merge(d)}>Merge</button></div>)}
     {msg && <p role="status">{msg}</p>}</div>;

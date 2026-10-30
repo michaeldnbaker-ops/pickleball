@@ -97,11 +97,15 @@ function sameNick(a: string, b: string): boolean {
 }
 
 const clubTag = (s: string) => { const m = normPerson(s).match(/\(([a-z0-9]{1,6})\)\s*$/); return m ? m[1] : ''; };
+/** Untagged names are Stone Creek. (FC) is Franco's. Two tags are the same club only when they map to one name. */
+const CLUB_TAGS: Record<string, string> = { fc: 'francos', francos: 'francos', cg: 'crossgates', crossgates: 'crossgates', sc: 'stone creek', stonecreek: 'stone creek' };
+export function clubOf(s: string): string { const tag = clubTag(s); return tag ? (CLUB_TAGS[tag] || tag) : 'stone creek'; }
 
 /** Why these two stored names might be one player, or null when they look different. */
 export function aliasReason(a: string, b: string): AliasWhy | null {
   const A = splitName(a), B = splitName(b);
   if (!A.all || !B.all || normPerson(a) === normPerson(b)) return null;
+  if (clubOf(a) !== clubOf(b)) return null;
   if (A.all === B.all) return 'same name';
   const lastEq = !!A.last && A.last === B.last;
   const bothSingle = !A.last && !B.last;
@@ -152,7 +156,7 @@ export interface NameUse { name: string; src?: NameSrc; games?: number }
 
 function srcRank(s: NameSrc | undefined): number { return s === 'self' ? 2 : s === 'host' ? 0 : 1; }
 
-/** Which spelling a confirmed merge keeps. A name typed on Join wins. An imported or host-typed spelling loses to one that was not. */
+/** Which spelling a confirmed merge keeps. A name typed on Join wins. Callers only pass names from the same club. */
 export function chooseKeptName(uses: NameUse[]): { name: string; why: string } {
   const by = new Map<string, { name: string; src: NameSrc; games: number }>();
   for (const u of uses) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { aliasReason, applyNameMerge, chooseKeptName, duplicatePairs, sourceOf, suggestName } from './names';
+import { aliasReason, applyNameMerge, chooseKeptName, clubOf, duplicatePairs, sourceOf, suggestName } from './names';
 
 const names = ['Michael Ledet', 'Mike Ledet', 'Michael Baker', 'Andrew Joyce', 'Andrew Cutliff', 'Jeff Stempel', 'Jeffrey Boyne', 'Owen Stempel', 'Ryan', 'Ryan (FC)', 'Tony', 'Tony (FC)', 'Scott', 'Scotty (CG)', 'Ian Krentel', 'Craig Newman'];
 
@@ -12,7 +12,8 @@ describe('name aliases', () => {
     expect(suggestName('Owen Stempel', ['Jeff Stempel'])).toBeNull();
     expect(suggestName('Andrew Joyce', ['Andrew Cutliff'])).toBeNull();
     expect(suggestName('Mike', ['Mike Ledet'])).toBeNull();
-    expect(suggestName('Ryan', ['Ryan (FC)'])).toBe('Ryan (FC)');
+    expect(suggestName('Ryan', ['Ryan (FC)'])).toBeNull();
+    expect(suggestName('Michael (FC)', ['Mike (FC)'])).toBe('Mike (FC)');
     expect(aliasReason('Craig Newman', 'Craig Neumann')).toBe('typo');
     expect(aliasReason('M Ledet', 'Mike Ledet')).toBe('initial');
   });
@@ -20,9 +21,13 @@ describe('name aliases', () => {
     const pairs = duplicatePairs(names);
     const key = (a: string, b: string) => pairs.find(p => p.a === a && p.b === b)?.why;
     expect(key('Michael Ledet', 'Mike Ledet')).toBe('nickname');
-    expect(key('Ryan', 'Ryan (FC)')).toBe('same name');
-    expect(key('Tony', 'Tony (FC)')).toBe('same name');
-    expect(key('Scott', 'Scotty (CG)')).toBe('nickname');
+    expect(key('Ryan', 'Ryan (FC)')).toBeUndefined();
+    expect(key('Tony', 'Tony (FC)')).toBeUndefined();
+    expect(key('Scott', 'Scotty (CG)')).toBeUndefined();
+    expect(aliasReason('Mike (FC)', 'Michael (FC)')).toBe('nickname');
+    expect(clubOf('Ryan')).toBe('stone creek');
+    expect(clubOf('Ryan (FC)')).toBe('francos');
+    expect(clubOf('Scotty (CG)')).toBe('crossgates');
     expect(key('Andrew Cutliff', 'Andrew Joyce')).toBeUndefined();
     expect(key('Jeff Stempel', 'Jeffrey Boyne')).toBeUndefined();
     expect(key('Jeff Stempel', 'Owen Stempel')).toBeUndefined();
@@ -44,6 +49,14 @@ describe('name aliases', () => {
       { name: 'Mike Ledet', src: 'self', games: 1 },
       { name: 'Michael Ledet', src: 'host', games: 9 },
     ]).name).toBe('Mike Ledet');
+    expect(chooseKeptName([
+      { name: 'Mike (FC)', src: 'host', games: 2 },
+      { name: 'Michael (FC)', src: 'self', games: 1 },
+    ]).name).toBe('Michael (FC)');
+    expect(chooseKeptName([
+      { name: 'Mike (FC)', src: 'host', games: 2 },
+      { name: 'Michael (FC)', src: 'host', games: 5 },
+    ]).name).toBe('Michael (FC)');
     expect(sourceOf({ addedLater: true }, { id: 'h10' })).toBe('host');
     expect(sourceOf({}, { id: 'bhuotjyv' })).toBe('');
     expect(sourceOf({ addedLater: true }, { id: 'h10', src: 'self' })).toBe('self');

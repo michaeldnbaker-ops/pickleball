@@ -1,4 +1,4 @@
-import { applyNameMerge, chooseKeptName, duplicatePairs, normPerson, sourceOf, type AliasWhy, type MergeEv, type NameUse } from '../src/engine/names';
+import { applyNameMerge, chooseKeptName, clubOf, duplicatePairs, normPerson, sourceOf, type AliasWhy, type MergeEv, type NameUse } from '../src/engine/names';
 
 type Row = Record<string, unknown>;
 export interface Db {
@@ -49,6 +49,7 @@ export async function previewMerge(db: Db, names: string[]) {
   const keys = [...new Set(names.map(normPerson).filter(Boolean))];
   if (keys.length < 2) return { error: 'need two names' as const };
   if (keys.length > 6 || names.some(n => n.length > 40)) return { error: 'bad name' as const };
+  if (new Set(names.map(clubOf)).size > 1) return { error: 'different club' as const };
   const rows = await eventsOf(db, keys);
   const kept = chooseKeptName(usesFrom(rows, await gamesOf(db, keys), keys));
   if (!kept.name) return { error: 'need two names' as const };
