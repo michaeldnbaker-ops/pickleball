@@ -4,6 +4,7 @@ import { capOf, overCap, validCourtSet, capChange } from './cap';
 import { buildPast } from './past';
 import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
 import { rosterWrite } from './roster';
+import { listDupes, mergePlayers } from './merge';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
@@ -158,6 +159,17 @@ export default {
         const tr = await pool.query(`select code, ev_name, date, w, diff from trophies where k=$1 and (hidden=false or $2) and lower(coalesce(club,'Stone Creek')) = $3 order by date desc`, [k, test, club]);
         return j({ matches: rows, trophies: tr.rows });
       }
+      if (url.pathname === '/stats/dupes' && req.method === 'GET') {
+        await ensureStats(); if (!(await isAdmin(req))) return j({ error: 'admin only' }, 403);
+        return j({ pairs: await listDupes(pool, test) });
+      }
+      if (url.pathname === '/stats/merge' && req.method === 'POST') {
+        await ensureStats(); if (!(await isAdmin(req))) return j({ error: 'admin only' }, 403);
+        const b = await req.json().catch(() => ({})) as { names?: unknown; confirm?: boolean };
+        const names = Array.isArray(b.names) ? b.names.filter((n): n is string => typeof n === 'string') : [];
+        const r = await mergePlayers(pool, names, !!b.confirm, syncStats);
+        return j(r.body, r.status);
+      }
       if (url.pathname === '/clubs' && req.method === 'GET') {
         await ensureStats(); const { rows } = await pool.query('select name from clubs where hidden=false or $1 order by lower(name)', [test]);
         return j({ clubs: [SC, ...rows.map(r => r.name)] });
@@ -211,6 +223,8 @@ export default {
           n.games = (await c.query("delete from events where code = any($1::text[]) and coalesce((data->>'hidden')::boolean,false) = true", [codes])).rowCount || 0;
           n.push = (await c.query('delete from push_subs where test = true')).rowCount || 0;
           n.inbox = (await c.query('delete from push_inbox')).rowCount || 0;
+          const bak = await c.query("select to_regclass('public.name_merge_backup') as t");
+          n.backups = bak.rows[0]?.t ? ((await c.query('delete from name_merge_backup where hidden = true')).rowCount || 0) : 0;
           await c.query('commit');
         } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
         return j({ ok: true, deleted: n });

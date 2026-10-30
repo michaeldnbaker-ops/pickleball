@@ -181,6 +181,15 @@ export async function resetIcon(name: string) {
 export async function checkAdmin(key: string) { const r = await fetch(`${API}/admin`, { headers: { 'x-admin': key }, cache: 'no-store' }); return r.ok && !!(await r.json()).admin; }
 export interface Trophy { code: string; ev_name: string; date: string; w: number; diff: number }
 export async function playerTrophies(name: string, club = SC): Promise<Trophy[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).trophies || []; }
+export interface Dupe { a: string; b: string; why: string; kept: string; reason: string }
+export async function nameDupes(): Promise<Dupe[]> {
+  const r = await fetch(`${API}/stats/dupes?x=1${q()}`, { headers: ah(), cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).pairs || [];
+}
+export async function mergeNames(names: string[], confirm: boolean): Promise<{ ok?: boolean; kept?: string; why?: string; error?: string }> {
+  const r = await fetch(`${API}/stats/merge?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ names, confirm }) });
+  const b = await r.json().catch(() => ({})); if (!r.ok) return { error: b.error || 'merge failed' }; return b;
+}
 
 // ---- Clubs (stats scope). Branding stays Stone Creek; missing club = Stone Creek. ----
 export const SC = 'Stone Creek';

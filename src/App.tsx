@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
+import { suggestName, whyText, type AliasWhy } from './engine/names';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
 import * as S from './store';
 
@@ -247,6 +248,7 @@ function PlayerForm({ onAdd, label = 'Add', autoFocus, big, preset, known }: { o
     <div className="nameHead"><label htmlFor={idp + '-n'}>Player name</label>
       {mine && shown.trim() && <button type="button" className="ghost small notYou" onClick={change}>Not you? Change</button>}</div>
     <input id={idp + '-n'} ref={inputRef} autoFocus={autoFocus && !preset?.name} className="nameInput" placeholder="Full name" autoComplete={preset?.name ? 'off' : 'name'} autoCapitalize="words" maxLength={40} value={shown} onChange={e => { setEdited(true); setName(e.target.value); }} onKeyDown={e => e.key === 'Enter' && submit()} />
+    {(() => { const guess = suggestName(shown, known || []); return guess ? <p className="didYou">Did you mean <button type="button" onClick={() => { setEdited(true); setMine(false); setName(guess); }}>{guess}</button>?</p> : null; })()}
     <div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
       <input id={idp + '-d'} className="duprInput" placeholder="e.g. 3.75" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, '').slice(0, 5))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
     <button className={'primary full' + (big ? ' big' : '')} disabled={busy || !shown.trim()} onClick={submit}>{label}</button></div>;
@@ -254,9 +256,11 @@ function PlayerForm({ onAdd, label = 'Add', autoFocus, big, preset, known }: { o
 
 function Roster() {
   const [r, setR] = useState(S.getRoster());
+  const [known, setKnown] = useState<string[]>([]);
+  useEffect(() => { S.knownPlayerNames([S.SC]).then(setKnown).catch(() => {}); }, []);
   const save = (x: Player[]) => { S.setRoster(x); setR(x); };
   return <div className="page"><Header title="Player Roster" back="" />
-    <PlayerForm onAdd={p => save([...r, p])} label="Add player" />
+    <PlayerForm known={known} onAdd={p => save([...r, { ...p, src: 'host' }])} label="Add player" />
     {r.sort((a, b) => a.name.localeCompare(b.name)).map(p => <div key={p.id} className="card row between"><span><b>{p.name}</b> <span className="muted">{p.dupr ? 'DUPR ' + p.dupr : ''}</span></span><button className="ghost danger" onClick={() => confirm('Remove ' + p.name + '?') && save(r.filter(x => x.id !== p.id))}>✕</button></div>)}
   </div>;
 }
@@ -282,6 +286,8 @@ function NewEvent() {
   const pickFormat = (f: Format) => { setFormat(f); if (f === 'club') setTeamsN(nT); };
   useEffect(() => { if (players.length > maxP) { const c = fitCap(players.length); if (c) setMaxP(c); } }, [players.length, maxP]);
   const [busy, setBusy] = useState(false);
+  const [known, setKnown] = useState<string[]>([]);
+  useEffect(() => { S.knownPlayerNames([homeClub]).then(setKnown).catch(() => {}); }, [homeClub]);
   const sel = new Set(players.map(p => p.id));
   const toggle = (p: Player) => setPlayers(sel.has(p.id) ? players.filter(x => x.id !== p.id) : [...players, p]);
   const create = async () => {
@@ -321,7 +327,7 @@ function NewEvent() {
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 2 && !isClub && <>
       <p className="muted small">Optional — anyone can also join by name from the game link, including after the game has started.</p>
-      <PlayerForm onAdd={p => { S.addToRoster(p); setPlayers([...players, p]); }} label="Add new player" />
+      <PlayerForm known={known} onAdd={p => { const h = { ...p, src: 'host' as const }; S.addToRoster(h); setPlayers([...players, h]); }} label="Add new player" />
       <div className="row between"><h2>{players.length} selected</h2><button className="ghost" onClick={() => setPlayers(players.length ? [] : roster)}>{players.length ? 'Clear' : 'Select all'}</button></div>
       <div className="chips">{[...roster, ...players.filter(p => !roster.some(r => r.id === p.id))].map(p => <button key={p.id} className={'chip ' + (sel.has(p.id) ? 'on' : '')} onClick={() => toggle(p)}>{p.name}{p.dupr ? ` · ${p.dupr}` : ''}</button>)}</div>
       {unit > 1 && <p className="muted small">{unit === 2 ? 'Pairs' : 'Teams of 4'} are formed when the game starts; anyone left over rotates in as a sub.</p>}
@@ -722,14 +728,34 @@ function IconEditor({ name, onClose }: { name: string; onClose: () => void }) {
     {S.adminKey() && <button className="big danger" onClick={async () => { await S.resetIcon(name); onClose(); }}>Reset icon (admin)</button>}
     <button className="big" onClick={onClose}>Close</button></div></div>;
 }
-function AdminKey() {
+function AdminKey({ onChange }: { onChange?: (on: boolean) => void }) {
   const [on, setOn] = useState(!!S.adminKey());
-  return <button className="ghost small adminBtn" onClick={async () => { if (on) { if (confirm('Turn off club admin on this phone?')) { localStorage.removeItem('pb:admin'); setOn(false); } return; }
-    const k = prompt('Club admin key'); if (!k) return; if (await S.checkAdmin(k.trim())) { localStorage.setItem('pb:admin', k.trim()); setOn(true); } else alert('That key is not valid.'); }}>{on ? 'Club admin: on' : 'Club admin'}</button>;
+  const set = (v: boolean) => { setOn(v); onChange?.(v); };
+  return <button className="ghost small adminBtn" onClick={async () => { if (on) { if (confirm('Turn off club admin on this phone?')) { localStorage.removeItem('pb:admin'); set(false); } return; }
+    const k = prompt('Club admin key'); if (!k) return; if (await S.checkAdmin(k.trim())) { localStorage.setItem('pb:admin', k.trim()); set(true); } else alert('That key is not valid.'); }}>{on ? 'Club admin: on' : 'Club admin'}</button>;
+}
+function PossibleDupes({ onMerged }: { onMerged: () => void }) {
+  const [pairs, setPairs] = useState<S.Dupe[] | null>(null); const [msg, setMsg] = useState('');
+  useEffect(() => { S.nameDupes().then(setPairs).catch(() => setPairs([])); }, []);
+  if (!pairs?.length) return null;
+  const merge = async (d: S.Dupe) => {
+    const plan = await S.mergeNames([d.a, d.b], false);
+    if (plan.error || !plan.kept) { setMsg(plan.error || "Couldn't check those names."); return; }
+    if (!confirm(`Merge ${d.a} and ${d.b} into ${plan.kept}?\n\n${plan.why}\n\nGames already played stay under that name.`)) return;
+    const done = await S.mergeNames([d.a, d.b], true);
+    if (done.error || !done.ok) { setMsg(done.error || "Couldn't merge those names."); return; }
+    setMsg(`Merged into ${done.kept}.`); onMerged(); setPairs(await S.nameDupes());
+  };
+  return <div className="card dupes"><h2>Possible duplicates</h2>
+    <p className="muted small">These names look like the same player. Merge keeps the name they entered on Join. Nothing changes until you confirm.</p>
+    {pairs.map(d => <div key={d.a + '\n' + d.b} className="dupeRow"><span className="grow"><b>{d.a}</b> and <b>{d.b}</b> <span className="muted small">{whyText[d.why as AliasWhy] || d.why}. Will keep {d.kept}.</span></span>
+      <button className="primary" onClick={() => merge(d)}>Merge</button></div>)}
+    {msg && <p role="status">{msg}</p>}</div>;
 }
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
   const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false); const [club, setClub] = useClubView();
+  const [admin, setAdmin] = useState(!!S.adminKey());
   useEffect(() => { setErr(false); setBoard(null); if (name) { setHist(null); S.statsPlayer(name, club).then(setHist).catch(() => setErr(true)); S.playerTrophies(name, club).then(setTro).catch(() => {}); } S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => setErr(true)); }, [name, club]);
   const picker = <ClubSelect id="stats-club" label="Club" value={club} onChange={setClub} />;
   const [tab, setTab] = useState<'players' | 'trophies'>('players');
@@ -760,7 +786,8 @@ function Stats({ name }: { name?: string }) {
       <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
     {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
-    <AdminKey />
+    {admin && <PossibleDupes onMerged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}
+    <AdminKey onChange={setAdmin} />
   </div>;
 }
 
@@ -817,8 +844,11 @@ function LateJoin({ ev, code, act, onPick, onJoined }: { ev: EventT; code: strin
 }
 function LateRoster({ ev, act }: { ev: EventT; act: Act }) {
   const [name, setName] = useState('');
+  const [known, setKnown] = useState<string[]>([]);
+  useEffect(() => { S.knownPlayerNames([ev.clubName || S.SC, ev.club?.home || '', ev.club?.away || ''].filter(Boolean)).then(setKnown).catch(() => {}); }, [ev.clubName, ev.club?.home, ev.club?.away]);
   const cap = capOf(ev); const n = new Set(ev.active).size;
-  const add = () => { const nm = name.trim().replace(/\s+/g, ' '); if (!nm) return; setName(''); act(e => { if (!addActivePlayer(e, { id: S.uid(), name: nm })) return; }); };
+  const guess = suggestName(name, known);
+  const add = () => { const nm = name.trim().replace(/\s+/g, ' '); if (!nm) return; setName(''); act(e => { if (!addActivePlayer(e, { id: S.uid(), name: nm, src: 'host' })) return; }); };
   const drop = (id: string, who: string) => { if (!confirm('Remove ' + who + ' from the next round on? This round stays, and games they already played still count.')) return; act(e => { dropPlayer(e, id, { when: 'next' }); }); };
   return <div className="card lateRoster">
     <p className="muted small">Add or remove players. This round stays. From the next round, matchups and sit-outs are redrawn. Games already played still count.</p>
@@ -828,6 +858,7 @@ function LateRoster({ ev, act }: { ev: EventT; act: Act }) {
     <label htmlFor="late-name">Add a player</label>
     <div className="row"><input id="late-name" value={name} maxLength={40} placeholder="Full name" onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
       <button className="primary" disabled={!name.trim() || isFull(ev)} onClick={add}>Add player</button></div>
+    {guess && <p className="didYou">Did you mean <button type="button" onClick={() => setName(guess)}>{guess}</button>?</p>}
     <div className="chips" style={{ marginTop: 8 }}>{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name} <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name)}>✕</button></span>)}</div>
   </div>;
 }
@@ -870,7 +901,7 @@ function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player, from
     const hit = await Promise.race([S.lookupName(p.name, clubs), new Promise<null>(r => setTimeout(() => r(null), 8000))]);
     const list = joinNames(hit ? [hit, ...knownRef.current] : knownRef.current, cur.players.filter(x => cur.active.includes(x.id)).map(x => x.name), S.getRoster().map(x => x.name));
     const n = canonicalName(p.name, list);
-    await onJoin({ ...p, name: n }, !!(fromMemory && normName(n) === normName(p.name)));
+    await onJoin({ ...p, name: n, src: 'self' }, !!(fromMemory && normName(n) === normName(p.name)));
   };
   return <div className="joinForm"><h2>Add yourself to this game</h2>
     {c && <div className="row joinSide" role="radiogroup" aria-label="Your club">{(['home', 'away'] as const).map(sd => <button key={sd} type="button" role="radio" aria-checked={side === sd} className={'big chip ' + (side === sd ? 'on primary' : '')} onClick={() => setSide(sd)}>Join as {sd === 'home' ? c.home : c.away}</button>)}</div>}

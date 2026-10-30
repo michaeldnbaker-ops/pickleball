@@ -1,4 +1,5 @@
 import { test, expect, devices } from '@playwright/test';
+import { existsSync, readFileSync } from 'node:fs';
 test.use({ ...devices['iPhone 13'], browserName: 'chromium' });
 const BASE = process.env.BASE || 'http://localhost:4173/';
 const API = 'https://br-weathered-heart-b520ib6i-pbapi.compute.c-7.us-east-2.aws.neon.tech';
@@ -1405,4 +1406,58 @@ test('lobby: creator (or admin) can rename a game before it starts; others canno
   await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
   await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible(); await expect(page.getByRole('button', { name: 'Edit name' })).toHaveCount(0);
   await page.screenshot({ path: 'e2e/shot-rename-after-start.png' }); await ctx.close();
+});
+
+test('a close name offers the existing player, and a confirmed merge keeps the joined spelling', async ({ page, browser, request }) => {
+  test.setTimeout(120000);
+  const tag = Math.random().toString(36).slice(2, 6);
+  const mike = 'Mike Zzdup ' + tag, michael = 'Michael Zzdup ' + tag;
+  const fillers = ['Pat', 'Kim', 'Lou'].map(n => n + ' Zzdup ' + tag);
+  const t = new Date(Date.now() + 26 * 3600e3); const d = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 11) + '09:00';
+  const game = (code: string, lead: { id: string; name: string; src?: 'host' }, score: [number, number], addedLater = false) => {
+    const ps = [lead, ...fillers.map((name, i) => ({ id: 'f' + i + code, name, ...(addedLater ? { src: 'host' as const } : {}) }))];
+    return { id: code, name: 'e2e dup ' + code, date: d, place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: [ps[0].id, ps[1].id], b: [ps[2].id, ps[3].id], sa: score[0], sb: score[1] }] }], createdAt: Date.now(), hidden: true, finished: true, addedLater, startedAt: 1, startedBy: 'organizer', host: 'organizer' };
+  };
+  const codeM = ('M' + tag).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  expect((await request.put(API + '/e/' + codeM, { data: { data: game(codeM, { id: 'h1', name: mike, src: 'host' }, [5, 11], true) } })).ok()).toBe(true);
+  await page.goto(BASE + '#/new'); await page.getByLabel('Event name').fill('Dup ' + tag); await page.getByLabel('Place').fill('Stone Creek');
+  await page.getByText('Next: Players').click();
+  await page.getByLabel('Player name').fill(michael);
+  await expect(page.locator('.didYou').getByRole('button', { name: mike, exact: true })).toBeVisible();
+  await page.locator('.didYou').getByRole('button', { name: mike, exact: true }).click();
+  await expect(page.getByLabel('Player name')).toHaveValue(mike);
+  for (const n of ['Ann', 'Bo', 'Cy', 'Di'].map(n => n + tag)) { await page.getByLabel('Player name').fill(n); await page.getByRole('button', { name: 'Add new player' }).click(); }
+  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByRole('button', { name: 'Create game' }).click();
+  await expect(page.getByText('4 joined')).toBeVisible(); const code = page.url().split('/e/')[1].split('/')[0];
+  const ctx = await browser.newContext({ ...devices['iPhone 13'] }); await markTest(ctx); const p2 = await ctx.newPage();
+  await p2.goto(new URL('?g=' + code, BASE).toString());
+  await p2.getByLabel('Player name').fill(michael);
+  await expect(p2.locator('.didYou').getByRole('button', { name: mike, exact: true })).toBeVisible();
+  await ctx.close();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Start game' }).click();
+  await expect(page.getByRole('heading', { name: /Round 1/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
+  await page.getByLabel('Add a player').fill(michael);
+  await expect(page.locator('.didYou').getByRole('button', { name: mike, exact: true })).toBeVisible();
+  const codeN = ('N' + tag).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  expect((await request.put(API + '/e/' + codeN, { data: { data: game(codeN, { id: 'live1', name: michael }, [11, 4]) } })).ok()).toBe(true);
+  const key = process.env.ADMIN_KEY || (existsSync('/cursor/stores/store-51a247a5-b164-434b-9dfc-b84c9c51c03a/secrets/pickleball-admin-key.txt') ? readFileSync('/cursor/stores/store-51a247a5-b164-434b-9dfc-b84c9c51c03a/secrets/pickleball-admin-key.txt', 'utf8').trim() : '');
+  expect(key.length, 'admin key missing').toBeGreaterThan(15);
+  const headers = { 'x-admin': key };
+  const dupes = await (await request.get(API + '/stats/dupes?test=1', { headers })).json();
+  const hit = (dupes.pairs as { a: string; b: string; kept: string }[]).find(p => [p.a, p.b].sort().join('|') === [mike, michael].sort().join('|'));
+  expect(hit?.kept).toBe(michael);
+  const preview = await request.post(API + '/stats/merge?test=1', { headers, data: { names: [mike, michael], confirm: false } });
+  expect(preview.ok()).toBe(true); expect((await preview.json()).kept).toBe(michael);
+  const merged = await request.post(API + '/stats/merge?test=1', { headers, data: { names: [mike, michael], confirm: true } });
+  expect(merged.ok()).toBe(true);
+  const board = (await (await request.get(API + '/stats?test=1&club=Stone%20Creek')).json()).players as { name: string; wins: number; losses: number }[];
+  const row = board.find(p => p.name === michael);
+  expect(row && row.wins + '-' + row.losses).toBe('1-1');
+  expect(board.some(p => p.name === mike)).toBe(false);
+  for (const c of [codeM, codeN]) {
+    const ev = (await (await request.get(API + '/e/' + c)).json()).data;
+    expect(ev.players.some((p: { name: string }) => p.name === michael)).toBe(true);
+    expect(ev.players.some((p: { name: string }) => p.name === mike)).toBe(false);
+  }
 });

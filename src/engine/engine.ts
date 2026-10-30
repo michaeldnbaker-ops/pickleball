@@ -1,5 +1,5 @@
 // Original pairing engine (no third-party code).
-export interface Player { id: string; name: string; dupr?: number; guest?: boolean; side?: 'home' | 'away' } // guest: unnamed visitor (kept out of Overall stats) // any legacy 'gender' field in saved data is ignored
+export interface Player { id: string; name: string; dupr?: number; guest?: boolean; side?: 'home' | 'away'; src?: 'self' | 'host' } // guest: unnamed visitor (kept out of Overall stats). src: 'self' = typed on Join, 'host' = added by the host or imported. Any legacy 'gender' field is ignored.
 export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team' | 'club';
 /** Club vs Club: N fixed 2-player teams per club ('' = empty slot before the start). Home team i stays on court slot i; visitors move one court each round. */
 export interface Club { home: string; away: string; n: number; homeTeams: string[][]; awayTeams: string[][] }
@@ -458,7 +458,7 @@ export function setClubSlot(ev: EventT, side: 'home' | 'away', team: number, slo
   const same = ev.players.find(p => normName(p.name) === k && ev.active.includes(p.id));
   if (same && same.id === cur) return true;
   if (same && onTeam.has(same.id)) return false;
-  let id = same?.id; if (!id) { id = Math.random().toString(36).slice(2, 10); ev.players.push({ id, name: name.trim().replace(/\s+/g, ' ') }); ev.active.push(id); }
+  let id = same?.id; if (!id) { id = Math.random().toString(36).slice(2, 10); ev.players.push({ id, name: name.trim().replace(/\s+/g, ' '), src: 'host' }); ev.active.push(id); }
   teams[team][slot] = id; return true;
 }
 const normName = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();

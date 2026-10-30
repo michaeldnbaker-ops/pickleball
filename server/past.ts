@@ -16,8 +16,8 @@ export function buildPast(inp: PastIn, today: string, code: string, ownerHash: s
   const ms = Array.isArray(inp.matches) ? inp.matches as PastMatchIn[] : [];
   if (!ms.length) return { error: 'add at least one match' };
   if (ms.length > PAST_MAX_MATCHES) return { error: `at most ${PAST_MAX_MATCHES} matches` };
-  const players: { id: string; name: string }[] = []; const byKey = new Map<string, string>();
-  const pid = (n: string) => { const k = key(n); let id = byKey.get(k); if (!id) { id = 'h' + (players.length + 1); byKey.set(k, id); players.push({ id, name: n }); } return id; };
+  const players: { id: string; name: string; src: 'host' }[] = []; const byKey = new Map<string, string>();
+  const pid = (n: string) => { const k = key(n); let id = byKey.get(k); if (!id) { id = 'h' + (players.length + 1); byKey.set(k, id); players.push({ id, name: n, src: 'host' }); } return id; }
   const rounds: unknown[] = [];
   for (let i = 0; i < ms.length; i++) {
     const m = ms[i] || {};
