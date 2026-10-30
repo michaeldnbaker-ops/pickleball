@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -320,7 +320,7 @@ function NewEvent() {
           onChange={e => { const x = { home: clubNames.home.map(r => r.slice()), away: clubNames.away.map(r => r.slice()) }; x[sd][i][k] = e.target.value; setClubNames(x); }} />)}</div>)}</div>)}
       <div className="row"><button className="big" onClick={() => setStep(1)}>‹ Back</button><button className="big primary" onClick={() => setStep(3)}>Next ›</button></div></>}
     {step === 2 && !isClub && <>
-      <p className="muted small">Optional — anyone can also join by name from the game link or the Join list until the game starts.</p>
+      <p className="muted small">Optional — anyone can also join by name from the game link, including after the game has started.</p>
       <PlayerForm onAdd={p => { S.addToRoster(p); setPlayers([...players, p]); }} label="Add new player" />
       <div className="row between"><h2>{players.length} selected</h2><button className="ghost" onClick={() => setPlayers(players.length ? [] : roster)}>{players.length ? 'Clear' : 'Select all'}</button></div>
       <div className="chips">{[...roster, ...players.filter(p => !roster.some(r => r.id === p.id))].map(p => <button key={p.id} className={'chip ' + (sel.has(p.id) ? 'on' : '')} onClick={() => toggle(p)}>{p.name}{p.dupr ? ` · ${p.dupr}` : ''}</button>)}</div>
@@ -368,15 +368,22 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   usePullToRefresh(refresh);
   // Added-later games have no live play: open on Standings (with the Added later note)
   useEffect(() => { if (ev?.addedLater) setTab(t => t === 'courts' || t === 'me' ? 'standings' : t); }, [ev?.addedLater]);
-  useEffect(() => { if (ev && !loading && ensurePlan(JSON.parse(JSON.stringify(ev)))) S.mutate(code, e => { ensurePlan(e); }, ev).then(r => setEv(r.ev)); }, [ev, loading, code]);
   // Serialize writes so a quick second action never re-reads the server before the first one has landed.
   const queue = useRef<Promise<void>>(Promise.resolve());
   const act = (fn: (e: EventT) => void) => (queue.current = queue.current.then(async () => { const base = S.localEvent(code) || ev; if (!base) return; const r = await S.mutate(code, fn, base); setEv(r.ev); setOnline(r.online); setStamp(new Date()); }).catch(() => {}));
+  // A late join changes who plays later, so the preview is redrawn. That save has to wait
+  // behind any score already being entered, or it would put the old round back.
+  useEffect(() => { if (ev && !loading && ensurePlan(JSON.parse(JSON.stringify(ev)))) act(e => { ensurePlan(e); }); }, [ev, loading, code]);
   if (!ev) return <div className="page"><Header title="Event" back="" />{loading ? <p>Loading…</p> : <p>Event {code} not found{online ? '' : ' (offline)'}.</p>}</div>;
   const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
-  const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId);
-  if (!member && !S.isOrg(code) && !watching && !ev.finished) return <Started ev={ev} code={code} onPick={id => { const p = ev.players.find(x => x.id === id); if (p) S.rememberPlayer(p); S.setMe(code, id); setTab('me'); setWatching(true); }} />;
+  const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId && ev.active.includes(p.id));
+  const enter = (id: string) => { const p = ev.players.find(x => x.id === id); if (p) S.rememberPlayer(p); S.setMe(code, id); setTab('me'); setWatching(true); };
+  if (!member && !S.isOrg(code) && !watching && !ev.finished) {
+    if (rosterOpen(ev) && isFull(ev)) return <FullCard ev={ev} onPick={enter} />;
+    if (rosterOpen(ev)) return <LateJoin ev={ev} code={code} act={act} onPick={enter} onJoined={enter} />;
+    return <Started ev={ev} code={code} onPick={enter} />;
+  }
   return <div className="page withtabs">
     <header><button className="ghost" onClick={() => go('')}>‹</button><Logo size={34} /><div className="grow"><h1>{ev.name}</h1><div className="muted small">{fmtName(ev.format)} · {ev.place} · code <b>{code}</b></div></div>
       <button className="ghost hdrShare" onClick={() => shareGame(ev, code, () => setSharing(true))} aria-label="Share game"><ShareIcon /></button>
@@ -501,7 +508,7 @@ function ScoreBox({ v, set, label = 'Score', onDone, last }: { v: number | ''; s
 function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => string; act?: Act }) {
   const [me, setMeS] = useState(S.getMe(code));
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer(ev.players.find(x => x.id === id)); };
-  if (!me || !ev.players.some(p => p.id === me)) return <div className="card"><h3 className="small muted">The game started — new players can't be added. Already playing? Tap your name</h3>
+  if (!me || !ev.players.some(p => p.id === me)) return <div className="card"><h3 className="small muted">Already playing? Tap your name. New players use the game link — they join the next round.</h3>
     <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip" onClick={() => pick(p.id)}>{p.name}</button>)}</div></div>;
   const mine = ev.rounds.map((r, i) => ({ r, i, m: r.matches.find(m => m.a.includes(me) || m.b.includes(me)), bye: r.byes.includes(me) }));
   const cur = mine[mine.length - 1];
@@ -601,8 +608,11 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <div className="card"><b>Share with players</b><div className="muted small break">{link}</div><div className="row shareRow"><button className="primary" onClick={() => shareGame(ev, code, () => setSharing(true))}>Share game</button></div></div>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <h2>Players ({ev.active.length} playing)</h2>
-    <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked: no adding or removing players after the start (the starter can sub someone in below)</div>
-    <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div>
+    {rosterOpen(ev) && host && <LateRoster ev={ev} act={act} />}
+    {rosterOpen(ev) && !host && <><div className="lockNote" role="note"><Icon n="lock" size={18} /> Players can still join with the game link. Only {hostName(ev)} can add or remove someone.</div>
+      <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div></>}
+    {!rosterOpen(ev) && <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked{ev.format === 'club' ? ' for Club vs Club' : ev.rounds.some(r => r.playoff) ? ' once playoffs start' : ''}. The starter can still sub someone in below.</div>}
+    {!rosterOpen(ev) && <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div>}
     <SubIn ev={ev} act={act} host={host} />
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
@@ -678,7 +688,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
       <CourtPicker id="start-courts-l" value={pickC} onChange={setPickC} />
       {club && (() => { const pl = new Set([...club.homeTeams.flat(), ...club.awayTeams.flat()]); const un = joined.filter(p => !pl.has(p.id)); return un.length > 0 && <p className="warn startUnplaced" role="status">Not on a team (won't play): {un.map(p => p.name).join(', ')}</p>; })()}
       {club ? <p className={'startCourts' + (courtsOk ? '' : ' warn')} role="status">Pick exactly {club.n} court{club.n === 1 ? '' : 's'} — one per home team (picked {pickC.length})</p> : (() => { const out = Math.max(0, joined.length - Math.min(pickC.length, Math.floor(joined.length / 4)) * 4); return <p className="startCourts" role="status">{Math.min(pickC.length, Math.floor(joined.length / 4))} game{Math.min(pickC.length, Math.floor(joined.length / 4)) === 1 ? '' : 's'} per round on Court{pickC.length === 1 ? '' : 's'} {courtsText({ courts: pickC.length, courtSet: pickC })}{out ? ` · ${out} sit out each round` : ''}</p>; })()}
-      <p>The whole schedule is drawn now from everyone who has joined{joined.length % 4 ? ` — with ${joined.length} players, sit-outs rotate evenly` : ''}. Courts are locked once you start. After the start the roster is locked (no adding or removing players), and only you can end the game or add rounds. Anyone playing can enter scores.</p>
+      <p>The whole schedule is drawn now from everyone who has joined{joined.length % 4 ? ` — with ${joined.length} players, sit-outs rotate evenly` : ''}. Courts are locked once you start. After the start, players can still join from the link and you can add or remove people: this round stays, and later rounds are redrawn (sit-outs rotate when the count is not a multiple of 4). Only you can end the game or add rounds. Anyone playing can enter scores.</p>
       <button className="big primary" disabled={starting || !ok || !courtsOk} onClick={start}>Start game</button>
       <button className="big" onClick={() => setAsk(false)}>Keep waiting</button></div></div>}
   </div>;
@@ -787,7 +797,40 @@ function ShareGame({ code, onClose }: { ev?: EventT; code: string; onClose: () =
   </div></div>;
 }
 
-/** Shown to a /g/CODE (or Join) visitor who isn't in a game that already started: no new joins. */
+/** Shown when a visitor opens a started game they are not in: join for the next round, or tap a name if they are already in. */
+function LateJoin({ ev, code, act, onPick, onJoined }: { ev: EventT; code: string; act: Act; onPick: (id: string) => void; onJoined: (id: string) => void }) {
+  return <div className="page"><Header title={ev.name} back="" />
+    <p className="muted small">This game has started. Joining puts you in from the next round — the round on court now stays as it is.</p>
+    <JoinForm ev={ev} onPick={onPick} onJoin={(p, fromMemory) => {
+      let added = false;
+      const done = act(e => { added = addActivePlayer(e, p); });
+      return done.then(() => {
+        const cur = S.localEvent(code);
+        if (added && cur?.players.some(x => x.id === p.id)) { onJoined(p.id); return; }
+        const same = fromMemory ? cur?.players.find(x => cur.active.includes(x.id) && normName(x.name) === normName(p.name)) : undefined;
+        if (same) { onJoined(same.id); return; }
+        if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, or the host raises the max, a spot opens up.');
+        else alert(cur?.rounds.some(r => r.playoff) ? 'Playoffs have started, so no one new can be added.' : 'Could not join. If that name is already in the game, tap it below.');
+      });
+    }} />
+  </div>;
+}
+function LateRoster({ ev, act }: { ev: EventT; act: Act }) {
+  const [name, setName] = useState('');
+  const cap = capOf(ev); const n = new Set(ev.active).size;
+  const add = () => { const nm = name.trim().replace(/\s+/g, ' '); if (!nm) return; setName(''); act(e => { if (!addActivePlayer(e, { id: S.uid(), name: nm })) return; }); };
+  const drop = (id: string, who: string) => { if (!confirm('Remove ' + who + ' from the next round on? This round stays, and games they already played still count.')) return; act(e => { dropPlayer(e, id, { when: 'next' }); }); };
+  return <div className="card lateRoster">
+    <p className="muted small">Add or remove players. This round stays. From the next round, matchups and sit-outs are redrawn. Games already played still count.</p>
+    {cap > 0 && <div className="maxEdit"><div className="muted small" id="live-max-l">Max players</div>
+      <div className="row maxRow" role="radiogroup" aria-labelledby="live-max-l">{CAPS.map(c => <button key={c} type="button" role="radio" aria-checked={cap === c} disabled={c < n} className={'chip maxChip ' + (cap === c ? 'on' : '')}
+        onClick={() => cap !== c && act(e => { if (rosterOpen(e) && c >= new Set(e.active).size) e.maxPlayers = c; })}>{c}</button>)}</div></div>}
+    <label htmlFor="late-name">Add a player</label>
+    <div className="row"><input id="late-name" value={name} maxLength={40} placeholder="Full name" onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
+      <button className="primary" disabled={!name.trim() || isFull(ev)} onClick={add}>Add player</button></div>
+    <div className="chips" style={{ marginTop: 8 }}>{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name} <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name)}>✕</button></span>)}</div>
+  </div>;
+}
 function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: string) => void }) {
   const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
   return <div className="page"><Header title={ev.name} back="" />

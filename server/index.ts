@@ -3,6 +3,7 @@ import { closeEvent } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
 import { buildPast } from './past';
 import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
+import { rosterWrite } from './roster';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
@@ -291,14 +292,16 @@ export default {
         const body = JSON.parse(text);
         const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as Ev | undefined;
         const by = url.searchParams.get('by') || '';
+        const orgQ = url.searchParams.get('org') === '1';
         // A completed match is read-only for everyone.
         if (cur?.finished && body.data) return j({ error: 'finished', data: cur }, 409);
-        const ids = (xs: unknown) => JSON.stringify([...new Set(((xs || []) as unknown[]).map(x => typeof x === 'string' ? x : (x as { id: string }).id))].sort());
         const started = !!cur && (cur.rounds || []).length > 0;
+        // Host: the phone that tapped Start. Older games with no starter treat the creator's phone as host.
+        const isStarter = !!cur && (cur.startedBy ? (by === cur.startedBy || (cur.startedBy === 'organizer' && orgQ)) : orgQ);
                 // Picked courts (by letter) must match the court count; anything malformed is dropped so the game falls back to A, B, C….
         if (body.data && 'courtSet' in body.data && !validCourtSet(body.data.courtSet, body.data.courts)) delete body.data.courtSet;
-        // The player cap: the creator's phone can change it before the start (4/8/12/16, never below the sign-ups); locked after the start.
-        if (cur && body.data) { const c = capChange(cur, body.data, { started, org: url.searchParams.get('org') === '1' }); if (c.error) return j({ error: c.error, data: cur }, 409); if (c.max) body.data.maxPlayers = c.max; else delete body.data.maxPlayers; }
+        // The player cap: creator before the start, host or creator after. 4/8/12/16, never below who is already in.
+        if (cur && body.data) { const c = capChange(cur, body.data, { started, org: orgQ, host: started && isStarter }); if (c.error) return j({ error: c.error, data: cur }, 409); if (c.max) body.data.maxPlayers = c.max; else delete body.data.maxPlayers; }
         if (started && body.data) {
           // Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
@@ -306,12 +309,11 @@ export default {
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
           for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy', 'clubName'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
-          // Roster is locked after the start: nobody added, dropped or re-added.
-          if (ids(body.data.players) !== ids(cur.players)) return j({ error: 'started', field: 'players', data: cur }, 409);
-          if (ids(body.data.active) !== ids(cur.active)) return j({ error: 'started', field: 'active', data: cur }, 409);
+          // Players can still join, and the host can add or drop. The round in progress (and every scored round) stays.
+          const roster = rosterWrite(cur, body.data, isStarter); if (roster.error) return j({ error: roster.error, data: cur }, 409);
+          if (overCap({ ...cur, maxPlayers: body.data.maxPlayers }, body.data)) return j({ error: 'full', max: capOf(body.data), data: cur }, 409);
           // Only the host (who tapped Start) can end/reopen the game or change the number of rounds. Older games with no starter are unchanged.
           // The creator's phone (org=1) counts as the starter when the game was started as 'organizer' (it may also have joined as a player).
-          const isStarter = by === cur.startedBy || (cur.startedBy === 'organizer' && url.searchParams.get('org') === '1');
           // Subs (approved exception to the locked roster): only the starter can add/undo them; entries must name players in the game.
           if (JSON.stringify(body.data.subs || []) !== JSON.stringify(cur.subs || [])) {
             if (cur.startedBy && !isStarter) return j({ error: 'host only', field: 'subs', data: cur }, 409);

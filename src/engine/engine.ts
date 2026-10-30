@@ -385,6 +385,24 @@ export function dropPlayer(ev: EventT, pid: string, o: DropOpts, rng: Rng = Math
 }
 /** Bring a withdrawn player back from the next round on. */
 export function readdPlayer(ev: EventT, pid: string, rng: Rng = Math.random) { if (!ev.active.includes(pid)) ev.active.push(pid); ensurePlan(ev, rng); }
+/** Join / add / drop is open once a game has started, until it is finished, a playoff, or Club vs Club (teams are the matchups). */
+export function rosterOpen(ev: Pick<EventT, 'rounds' | 'finished' | 'format'>) {
+  return ev.rounds.length > 0 && !ev.finished && ev.format !== 'club' && !ev.rounds.some(r => r.playoff);
+}
+/** Add someone after the start. They play from the next unplayed round; the round in progress is left alone. */
+export function addActivePlayer(ev: EventT, p: Player, rng: Rng = Math.random) {
+  if (!rosterOpen(ev)) return false;
+  const name = (p.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  const key = name.toLowerCase();
+  if (!name || ev.players.some(x => x.id === p.id)) return false;
+  if (ev.players.some(x => ev.active.includes(x.id) && (x.name || '').trim().replace(/\s+/g, ' ').toLowerCase() === key)) return false;
+  const max = [4, 8, 12, 16].includes(Number(ev.maxPlayers)) ? Number(ev.maxPlayers) : 0;
+  if (max && new Set(ev.active).size >= max) return false;
+  ev.players.push({ ...p, name });
+  if (!ev.active.includes(p.id)) ev.active.push(p.id);
+  ensurePlan(ev, rng);
+  return true;
+}
 
 /** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. */
 export function startEvent(ev: EventT, rng: Rng = Math.random) {

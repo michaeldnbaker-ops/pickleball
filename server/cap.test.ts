@@ -23,10 +23,16 @@ describe('changing the cap (server)', () => {
     expect(capChange(g(6, 8), g(6, 4), { started: false, org: true })).toEqual({ max: 8, error: 'max below players' });
     expect(capChange(g(6, 8), g(6, 5), { started: false, org: true }).error).toBe('bad max');
   });
-  it('non-creators and started games keep the stored cap; a write without maxPlayers keeps it', () => {
+  it('non-creators keep the stored cap; a write without maxPlayers keeps it', () => {
     expect(capChange(g(6, 8), g(6, 16), { started: false, org: false })).toEqual({ max: 8 });
-    expect(capChange(g(8, 8), g(8, 16), { started: true, org: true })).toEqual({ max: 8 });
     expect(capChange(g(6, 8), g(6), { started: false, org: true })).toEqual({ max: 8 });
+  });
+  it('after the start the host or the creator can raise or lower the cap, never below who is already in', () => {
+    expect(capChange(g(8, 8), g(8, 16), { started: true, org: true })).toEqual({ max: 16 });
+    expect(capChange(g(8, 8), g(8, 12), { started: true, org: false, host: true })).toEqual({ max: 12 });
+    expect(capChange(g(8, 16), g(8, 8), { started: true, org: false, host: true })).toEqual({ max: 8 });
+    expect(capChange(g(9, 16), g(9, 8), { started: true, org: true })).toEqual({ max: 16, error: 'max below players' });
+    expect(capChange(g(8, 8), g(8, 16), { started: true, org: false })).toEqual({ max: 8 });
   });
   it('older uncapped game: creator may add a cap ≥ sign-ups; others leave it uncapped', () => {
     expect(capChange(g(6), g(6, 8), { started: false, org: true })).toEqual({ max: 8 });

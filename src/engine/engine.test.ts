@@ -190,7 +190,7 @@ describe('drop player & play-ahead lock', () => {
   });
 });
 
-import { startEvent, addRounds, endEvent } from './engine';
+import { startEvent, addRounds, endEvent, addActivePlayer, trophyWinners } from './engine';
 describe('lobby start, any player count, extend/end', () => {
   const mk = (n: number, format: Format = 'rotating', courts = 3, totalRounds = 6): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts, totalRounds, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
   it('lobby has no rounds or plan until started', () => { const ev = mk(10); expect(ensurePlan(ev)).toBe(false); expect(ev.plan).toBeUndefined(); });
@@ -206,6 +206,47 @@ describe('lobby start, any player count, extend/end', () => {
   it('late joiner after start is slotted into upcoming rounds', () => {
     const ev = mk(8, 'rotating', 2); startEvent(ev, mulberry(4)); ev.players.push({ id: 'late', name: 'Late' }); ev.active.push('late'); ensurePlan(ev, mulberry(5));
     expect(ev.plan!.some(r => r.matches.some(m => [...m.a, ...m.b].includes('late')))).toBe(true);
+  });
+  it('a late player keeps the round in progress and later rounds sit one person out, fairly', () => {
+    const ev = mk(8, 'rotating', 3, 6); startEvent(ev, mulberry(4));
+    ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 7; });
+    const frozen = JSON.stringify(ev.rounds);
+    expect(addActivePlayer(ev, { id: 'late', name: 'Late Pat' }, mulberry(5))).toBe(true);
+    expect(JSON.stringify(ev.rounds)).toBe(frozen);
+    expect(ev.plan!.length).toBe(5);
+    const cnt = new Map<string, number>();
+    for (const r of ev.plan!) {
+      const ids = [...r.matches.flatMap(m => [...m.a, ...m.b]), ...r.byes];
+      expect(ids.slice().sort()).toEqual(ev.active.slice().sort());
+      expect(r.matches.length).toBe(2); expect(r.byes.length).toBe(1);
+      r.byes.forEach(b => cnt.set(b, (cnt.get(b) || 0) + 1));
+    }
+    const v = ev.active.map(id => cnt.get(id) || 0);
+    expect(Math.max(...v) - Math.min(...v)).toBeLessThanOrEqual(1);
+    expect(ev.plan!.some(r => [...r.matches.flatMap(m => [...m.a, ...m.b])].includes('late'))).toBe(true);
+  });
+  it('dropping after a scored round keeps that result and the current round', () => {
+    const ev = mk(8, 'rotating', 2, 4); startEvent(ev, mulberry(3));
+    ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 4; });
+    const victim = ev.rounds[0].matches[0].a[0];
+    const frozen = JSON.stringify(ev.rounds);
+    dropPlayer(ev, victim, { when: 'next' }, mulberry(8));
+    expect(JSON.stringify(ev.rounds)).toBe(frozen);
+    expect(ev.players.some(p => p.id === victim)).toBe(true);
+    expect(ev.active).not.toContain(victim);
+    expect(standings(ev).find(s => s.id === victim)!.gp).toBeGreaterThan(0);
+    for (const r of ev.plan || []) expect([...r.matches.flatMap(m => [...m.a, ...m.b]), ...r.byes]).not.toContain(victim);
+    ev.trophy = true; endEvent(ev);
+    const winners = trophyWinners(ev).map(t => t.id);
+    expect(winners).toContain(victim);
+  });
+  it('refuses a late add once the game is a playoff, full, or club', () => {
+    const ev = mk(8); startEvent(ev, mulberry(1)); ev.rounds.push({ n: 9, matches: [], byes: [], playoff: true });
+    expect(addActivePlayer(ev, { id: 'late', name: 'Late' }, mulberry(2))).toBe(false);
+    const full = mk(4); full.maxPlayers = 4; startEvent(full, mulberry(2));
+    expect(addActivePlayer(full, { id: 'late', name: 'Late' }, mulberry(3))).toBe(false);
+    const club = mk(4); club.format = 'club'; club.rounds = [{ n: 1, matches: [], byes: [] }];
+    expect(addActivePlayer(club, { id: 'late', name: 'Late' }, mulberry(4))).toBe(false);
   });
   it('add rounds at the last round, end early', () => {
     const ev = mk(8, 'rotating', 2, 1); startEvent(ev, mulberry(6)); expect(ev.plan).toEqual([]);
