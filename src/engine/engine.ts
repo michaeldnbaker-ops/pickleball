@@ -91,6 +91,13 @@ function bestSplit(g: string[], c: Ctx) {
   return best!;
 }
 
+/** Same matches, ignoring court order and which side is listed first. */
+export function roundSignature(matches: { a: string[]; b: string[] }[]): string {
+  return matches.map(m => {
+    const a = [...m.a].sort().join(','), b = [...m.b].sort().join(',');
+    return a < b ? a + '>' + b : b + '>' + a;
+  }).sort().join('|');
+}
 /** Rotating-partner doubles: random restarts + pairwise swap improvement. */
 export function rotatingRound(players: string[], courts: number, c: Ctx, iters = 300): Match[] {
   const n = players.length; if (n < 4) return [];
@@ -206,6 +213,12 @@ export function nextRound(ev: EventT, rng: Rng = Math.random, iters?: number): R
     }
     const matches: Match[] = [];
     for (let i = 0; i + 4 <= order.length; i += 4) { const s = bestSplit(order.slice(i, i + 4), { ...c, balance: true, noise: 0.1 }); matches.push({ court: i / 4 + 1, a: s.a, b: s.b }); }
+    return { n, matches, byes };
+  }
+  if (ev.format === 'rotating') {
+    const used = new Set(ev.rounds.filter(r => !r.playoff).map(r => roundSignature(r.matches)));
+    let matches = rotatingRound(playing, ev.courts, { ...c, balance: false, noise: 0.5 }, 300);
+    for (let t = 0; t < 30 && matches.length && used.has(roundSignature(matches)); t++) matches = rotatingRound(playing, ev.courts, c, 300);
     return { n, matches, byes };
   }
   return { n, matches: rotatingRound(playing, ev.courts, c, c.iters ?? 300), byes };
@@ -332,7 +345,22 @@ export function improveSchedule(rounds: Round[], from: number, rng: Rng, iters =
     }
     return s;
   };
-  const cost = () => { let s = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) s += 1000 * tri(P[i * N + j]) + 10 * tri(O[i * N + j]); return s + byeAdj() + 1e6 * unfair() + early(); };
+  const dupRounds = () => {
+    const seen = new Set<string>(); let d = 0;
+    for (const r of R) {
+      const parts: string[] = [];
+      for (let c = 0; c < r.seats.length; c += 4) {
+        const A = [r.seats[c], r.seats[c + 1]].sort((x, y) => x - y).join(',');
+        const B = [r.seats[c + 2], r.seats[c + 3]].sort((x, y) => x - y).join(',');
+        parts.push(A < B ? A + '>' + B : B + '>' + A);
+      }
+      const sig = parts.sort().join('|');
+      if (seen.has(sig)) d++;
+      seen.add(sig);
+    }
+    return d;
+  };
+  const cost = () => { let s = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) s += 1000 * tri(P[i * N + j]) + 10 * tri(O[i * N + j]); return s + byeAdj() + 1e6 * unfair() + early() + dupRounds() * 1e12; };
   let cur = cost(); const span = R.length - from; if (span <= 0) return rounds;
   const pick = () => from + Math.floor(rng() * span);
   // Only keep a swap that does not make partners, opponents, or sit-outs worse. Accepting a worse draw was repeating partners in round 2 while a fresh partner was still available.
@@ -353,23 +381,16 @@ export function improveSchedule(rounds: Round[], from: number, rng: Rng, iters =
   }
   return R.map((r, k) => k < from ? rounds[k] : { ...rounds[k], byes: r.byes.map(i => ids[i]), matches: r.courts.map((court, c) => ({ court, a: [ids[r.seats[c * 4]], ids[r.seats[c * 4 + 1]]], b: [ids[r.seats[c * 4 + 2]], ids[r.seats[c * 4 + 3]]] })) });
 }
-/** Draw `count` more regular rounds for sim (rotating format): a few greedy random restarts, then polish the best whole schedule by local search. */
-export function searchSchedule(sim: EventT, count: number, rng: Rng, restarts = sim.active.length > 12 ? 1 : 3): Round[] {
-  const ids = sim.active; let best: Round[] = []; let bestCost = Infinity;
-  const smart = sim.format === 'rotating' && !sim.balanceDupr;
-  const tries = smart ? restarts : 1;
+/** Draw `count` more regular rounds. A round robin is one fresh random sequence from this call's random source. The polish may only keep a draw that is no worse, and it may not copy a round. */
+export function searchSchedule(sim: EventT, count: number, rng: Rng, _restarts = sim.active.length > 12 ? 1 : 3): Round[] {
+  void _restarts;
+  const e: EventT = { ...sim, rounds: sim.rounds.slice() }; const out: Round[] = [];
+  for (let k = 0; k < count; k++) { const r = nextRound(e, rng); e.rounds.push(r); out.push(r); }
+  if (sim.format !== 'rotating' || !out.length) return out;
   const prior = sim.rounds.filter(r => !r.playoff);
-  for (let t = 0; t < tries; t++) {
-    const e: EventT = { ...sim, rounds: sim.rounds.slice() }; const out: Round[] = [];
-    // Full search per round. A short search was locking in a repeat partner while someone they had not played with was still free.
-    for (let k = 0; k < count; k++) { const r = nextRound(e, rng); e.rounds.push(r); out.push(r); }
-    const cost = scheduleCost([...prior, ...out], ids);
-    if (cost < bestCost) { bestCost = cost; best = out; }
-    if (cost === 0) break;
-  }
-  if (!smart || !best.length) return best;
-  const polished = improveSchedule([...prior, ...best], prior.length, rng).slice(prior.length);
-  return scheduleCost([...prior, ...polished], ids) <= bestCost ? polished : best;
+  const rawCost = scheduleCost([...prior, ...out], sim.active);
+  const polished = improveSchedule([...prior, ...out], prior.length, rng).slice(prior.length);
+  return scheduleCost([...prior, ...polished], sim.active) <= rawCost ? polished : out;
 }
 /** Advance to the next regular round, using the pre-drawn plan when still valid. */
 export function takeNextRound(ev: EventT, rng: Rng = Math.random): Round {
@@ -444,7 +465,7 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
     ev.teams = [...preset, ...teams];
   }
   if (resultDependent(ev.format)) { ev.rounds.push(nextRound(ev, rng)); return; }
-  // draw the whole schedule at once (round 1 included) so it is optimized as a set
+  // One fresh random schedule for this game. The random source is the caller's; the app passes Math.random.
   const all = searchSchedule(ev, Math.max(1, ev.totalRounds), rng);
   ev.rounds.push(all[0]); ev.plan = all.slice(1).map((r, i) => ({ ...r, n: i + 2 })); ev.planKey = planKeyOf(ev);
 }

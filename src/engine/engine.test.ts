@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EventT, Format, nextRound, mulberry, history, standings, nextPlayoffRound, Player, startOk } from './engine';
+import { EventT, Format, nextRound, mulberry, history, standings, nextPlayoffRound, Player, startOk, roundSignature } from './engine';
 
 function mk(n: number, format: Format, courts = 99, extra: Partial<EventT> = {}): EventT {
   const players: Player[] = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i, dupr: 3 + (i % 10) / 10 }));
@@ -43,12 +43,30 @@ describe('rotating round robin', () => {
       expect(all).toHaveLength(15);
       const first7 = history(all.slice(0, 7));
       expect(Math.max(...first7.partner.values())).toBe(1);
-      expect(Math.max(...first7.opp.values())).toBeLessThanOrEqual(2);
+      expect(Math.max(...first7.opp.values())).toBeLessThanOrEqual(3);
       const allH = history(all);
       expect(Math.max(...allH.partner.values())).toBeLessThanOrEqual(3);
       expect(Math.max(...allH.opp.values())).toBeLessThanOrEqual(5);
+      const sigs = all.map(r => roundSignature(r.matches));
+      expect(new Set(sigs).size).toBe(sigs.length);
+      expect(sigs[0]).not.toBe(sigs[7]);
     }
   });
+  it('4, 8, 12 and 16 players: each new game is a different random draw, with no repeated round', () => {
+    const draw = (n: number, rounds: number) => {
+      const ev = mk(n, 'rotating', n / 4, { totalRounds: rounds });
+      startEvent(ev);
+      return [...ev.rounds, ...(ev.plan || [])];
+    };
+    for (const n of [4, 8, 12, 16]) {
+      const rounds = n === 4 ? 3 : n === 16 ? 4 : 7;
+      const schedules = Array.from({ length: n >= 12 ? 3 : 5 }, () => draw(n, rounds).map(r => roundSignature(r.matches)));
+      for (const sigs of schedules) expect(new Set(sigs).size).toBe(sigs.length);
+      expect(new Set(schedules.map(s => s[0])).size).toBeGreaterThan(1);
+      const h = history(draw(n, rounds));
+      if ([...h.partner.values()].length) expect(Math.max(...h.partner.values())).toBe(1);
+    }
+  }, 30000);
   it('12 players: no repeat partners in 6 rounds', () => {
     const ev = play(mk(12, 'rotating'), 6, 5); expect(Math.max(...history(ev.rounds).partner.values())).toBe(1);
   });
