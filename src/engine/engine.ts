@@ -289,11 +289,22 @@ export function ensurePlan(ev: EventT, rng: Rng = Math.random): boolean {
   ev.plan = plan; ev.planKey = key; return true;
 }
 /** Whole-schedule quality: repeat partners weigh most, then repeat opponents, then uneven sit-outs / games (lower is better). */
+const pairKey = (a: string, b: string) => a < b ? a + '|' + b : b + '|' + a;
+/** Lower is better. Repeating a partner (then an opponent) costs more the earlier it happens, so a fresh partner is used while one still exists. */
 export function scheduleCost(rounds: Round[], ids: string[]): number {
   const h = history(rounds); let s = 0;
   for (const v of h.partner.values()) s += 1000 * (v - 1) * v / 2;
   for (const v of h.opp.values()) s += 10 * (v - 1) * v / 2;
-  const g = ids.map(i => h.games.get(i) || 0); s += 1e5 * Math.max(0, Math.max(...g) - Math.min(...g) - 1);
+  const g = ids.map(i => h.games.get(i) || 0); if (g.length) s += 1e5 * Math.max(0, Math.max(...g) - Math.min(...g) - 1);
+  const seenP = new Map<string, number>(), seenO = new Map<string, number>();
+  rounds.forEach((r, i) => {
+    if (r.playoff) return;
+    const w = rounds.length - i;
+    for (const m of r.matches) {
+      for (const t of [m.a, m.b]) { if (t.length < 2) continue; const k = pairKey(t[0], t[1]); const n = (seenP.get(k) || 0) + 1; seenP.set(k, n); if (n > 1) s += w * 1e6 * (n - 1); }
+      for (const x of m.a) for (const y of m.b) { const k = pairKey(x, y); const n = (seenO.get(k) || 0) + 1; seenO.set(k, n); if (n > 1) s += w * 1e3 * (n - 1); }
+    }
+  });
   return s;
 }
 /** Polish a schedule by local search: swap players inside a round, or trade a sit-out between two rounds (keeps everyone's game count). Only rounds from `from` on change. */
@@ -309,42 +320,56 @@ export function improveSchedule(rounds: Round[], from: number, rng: Rng, iters =
   const byeAdj = () => { let s = 0; for (let i = 1; i < R.length; i++) for (const p of R[i].byes) if (R[i - 1].byes.includes(p)) s++; return s; };
   // sit-outs rotate in order: nobody sits again while someone playing that round has sat out fewer times so far
   const unfair = () => { const cnt = new Int32Array(N); let v = 0; for (let k = 0; k < R.length; k++) { const r = R[k]; if (k >= from && r.byes.length) { let mx = -1, mn = 1e9; for (const p of r.byes) mx = Math.max(mx, cnt[p]); for (const p of r.seats) mn = Math.min(mn, cnt[p]); if (mx > mn) v += mx - mn; } for (const p of r.byes) cnt[p]++; } return v; };
-  const cost = () => { let s = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) s += 1000 * tri(P[i * N + j]) + 10 * tri(O[i * N + j]); return s + byeAdj() + 1e6 * unfair(); };
+  const early = () => {
+    const pc = new Int32Array(N * N), oc = new Int32Array(N * N); let s = 0;
+    for (let k = 0; k < R.length; k++) {
+      const w = R.length - k; const seat = R[k].seats;
+      for (let c = 0; c < seat.length; c += 4) {
+        const bumpP = (a: number, b: number) => { const n = ++pc[a * N + b]; pc[b * N + a] = n; if (n > 1) s += w * 1000 * (n - 1); };
+        bumpP(seat[c], seat[c + 1]); bumpP(seat[c + 2], seat[c + 3]);
+        for (const u of [seat[c], seat[c + 1]]) for (const v of [seat[c + 2], seat[c + 3]]) { const n = ++oc[u * N + v]; if (n > 1) s += w * (n - 1); }
+      }
+    }
+    return s;
+  };
+  const cost = () => { let s = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) s += 1000 * tri(P[i * N + j]) + 10 * tri(O[i * N + j]); return s + byeAdj() + 1e6 * unfair() + early(); };
   let cur = cost(); const span = R.length - from; if (span <= 0) return rounds;
   const pick = () => from + Math.floor(rng() * span);
+  // Only keep a swap that does not make partners, opponents, or sit-outs worse. Accepting a worse draw was repeating partners in round 2 while a fresh partner was still available.
   for (let it = 0; it < iters && cur > 0; it++) {
-    const T = 2 * (1 - it / iters);
     if (rng() < 0.6 || R[from].byes.length === 0) {
       const r = R[pick()]; const L = r.seats.length; if (L < 4) continue;
       const i = Math.floor(rng() * L), j = Math.floor(rng() * L); if (i === j || (i >> 1) === (j >> 1)) continue;
       add(r, -1); [r.seats[i], r.seats[j]] = [r.seats[j], r.seats[i]]; add(r, 1);
-      const c = cost(); if (c <= cur || rng() < Math.exp((cur - c) / Math.max(T, 1e-9))) cur = c; else { add(r, -1); [r.seats[i], r.seats[j]] = [r.seats[j], r.seats[i]]; add(r, 1); }
+      const c = cost(); if (c <= cur) cur = c; else { add(r, -1); [r.seats[i], r.seats[j]] = [r.seats[j], r.seats[i]]; add(r, 1); }
     } else {
       const r1 = R[pick()], r2 = R[pick()]; if (r1 === r2 || !r1.byes.length || !r2.byes.length) continue;
       const x = r1.byes[Math.floor(rng() * r1.byes.length)], y = r2.byes[Math.floor(rng() * r2.byes.length)]; if (x === y) continue;
       const sx = r2.seats.indexOf(x), sy = r1.seats.indexOf(y); if (sx < 0 || sy < 0) continue; // x plays in r2, y plays in r1
       const swap = () => { add(r1, -1); add(r2, -1); r1.seats[sy] = x; r1.byes[r1.byes.indexOf(x)] = y; r2.seats[sx] = y; r2.byes[r2.byes.indexOf(y)] = x; add(r1, 1); add(r2, 1); };
       const unswap = () => { add(r1, -1); add(r2, -1); r1.seats[sy] = y; r1.byes[r1.byes.indexOf(y)] = x; r2.seats[sx] = x; r2.byes[r2.byes.indexOf(x)] = y; add(r1, 1); add(r2, 1); };
-      swap(); const c = cost(); if (c <= cur || rng() < Math.exp((cur - c) / Math.max(T, 1e-9))) cur = c; else unswap();
+      swap(); const c = cost(); if (c <= cur) cur = c; else unswap();
     }
   }
   return R.map((r, k) => k < from ? rounds[k] : { ...rounds[k], byes: r.byes.map(i => ids[i]), matches: r.courts.map((court, c) => ({ court, a: [ids[r.seats[c * 4]], ids[r.seats[c * 4 + 1]]], b: [ids[r.seats[c * 4 + 2]], ids[r.seats[c * 4 + 3]]] })) });
 }
 /** Draw `count` more regular rounds for sim (rotating format): a few greedy random restarts, then polish the best whole schedule by local search. */
-export function searchSchedule(sim: EventT, count: number, rng: Rng, restarts = sim.active.length > 12 ? 2 : 6): Round[] {
+export function searchSchedule(sim: EventT, count: number, rng: Rng, restarts = sim.active.length > 12 ? 1 : 3): Round[] {
   const ids = sim.active; let best: Round[] = []; let bestCost = Infinity;
   const smart = sim.format === 'rotating' && !sim.balanceDupr;
   const tries = smart ? restarts : 1;
+  const prior = sim.rounds.filter(r => !r.playoff);
   for (let t = 0; t < tries; t++) {
     const e: EventT = { ...sim, rounds: sim.rounds.slice() }; const out: Round[] = [];
-    for (let k = 0; k < count; k++) { const r = nextRound(e, rng, smart ? 30 : undefined); e.rounds.push(r); out.push(r); }
-    const cost = scheduleCost(e.rounds.filter(r => !r.playoff), ids);
+    // Full search per round. A short search was locking in a repeat partner while someone they had not played with was still free.
+    for (let k = 0; k < count; k++) { const r = nextRound(e, rng); e.rounds.push(r); out.push(r); }
+    const cost = scheduleCost([...prior, ...out], ids);
     if (cost < bestCost) { bestCost = cost; best = out; }
     if (cost === 0) break;
   }
   if (!smart || !best.length) return best;
-  const prior = sim.rounds.filter(r => !r.playoff);
-  return improveSchedule([...prior, ...best], prior.length, rng).slice(prior.length);
+  const polished = improveSchedule([...prior, ...best], prior.length, rng).slice(prior.length);
+  return scheduleCost([...prior, ...polished], ids) <= bestCost ? polished : best;
 }
 /** Advance to the next regular round, using the pre-drawn plan when still valid. */
 export function takeNextRound(ev: EventT, rng: Rng = Math.random): Round {

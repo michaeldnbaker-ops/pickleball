@@ -35,6 +35,20 @@ describe('rotating round robin', () => {
     const ev = play(mk(8, 'rotating'), 7, 3);
     const h = history(ev.rounds); expect(Math.max(...h.partner.values())).toBe(1);
   });
+  it('8 players, 2 courts, 15 rounds: partners and opponents repeat only after a full rotation', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const ev = mk(8, 'rotating', 2, { totalRounds: 15 });
+      startEvent(ev, mulberry(seed));
+      const all = [...ev.rounds, ...(ev.plan || [])];
+      expect(all).toHaveLength(15);
+      const first7 = history(all.slice(0, 7));
+      expect(Math.max(...first7.partner.values())).toBe(1);
+      expect(Math.max(...first7.opp.values())).toBeLessThanOrEqual(2);
+      const allH = history(all);
+      expect(Math.max(...allH.partner.values())).toBeLessThanOrEqual(3);
+      expect(Math.max(...allH.opp.values())).toBeLessThanOrEqual(5);
+    }
+  });
   it('12 players: no repeat partners in 6 rounds', () => {
     const ev = play(mk(12, 'rotating'), 6, 5); expect(Math.max(...history(ev.rounds).partner.values())).toBe(1);
   });
