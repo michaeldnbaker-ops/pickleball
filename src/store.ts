@@ -131,7 +131,7 @@ export async function listEvents(): Promise<Listed[]> {
 }
 export const testMode = () => LS.getItem('pb:hidden') === '1';
 
-export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number }
+export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number; silver?: number; pickles?: number }
 export interface StatMatch { id: string; code: string; ev_name: string; date: string; an: string[]; bn: string[]; sa: number; sb: number }
 const q = () => (testMode() ? '&test=1' : '');
 export async function statsBoard(club = SC): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
@@ -179,7 +179,7 @@ export async function resetIcon(name: string) {
   await loadIcons(true); return r.ok;
 }
 export async function checkAdmin(key: string) { const r = await fetch(`${API}/admin`, { headers: { 'x-admin': key }, cache: 'no-store' }); return r.ok && !!(await r.json()).admin; }
-export interface Trophy { code: string; ev_name: string; date: string; w: number; diff: number }
+export interface Trophy { code: string; ev_name: string; date: string; w: number; diff: number; place?: 'gold' | 'silver' }
 export async function playerTrophies(name: string, club = SC): Promise<Trophy[]> { const r = await fetch(`${API}/stats/player?name=${encodeURIComponent(name)}${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).trophies || []; }
 export interface Dupe { a: string; b: string; why: string; kept: string; reason: string }
 export async function nameDupes(): Promise<Dupe[]> {

@@ -1461,3 +1461,37 @@ test('a close name offers the existing player, and a confirmed merge keeps the j
     expect(ev.players.some((p: { name: string }) => p.name === mike)).toBe(false);
   }
 });
+
+test('Create offers Track stats or Just set up rounds (don\'t track); untracked games stay out of stats, trophies, and pickles', async ({ page, request }) => {
+  test.setTimeout(90000);
+  const tag = Math.random().toString(36).slice(2, 6).toLowerCase();
+  await page.goto(BASE); await page.getByText('Create a game').click(); await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click();
+  const track = page.getByRole('radio', { name: 'Track stats' });
+  const skip = page.getByRole('radio', { name: "Just set up rounds (don't track)" });
+  await expect(track).toHaveAttribute('aria-checked', 'true');
+  await expect(skip).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByLabel(/Trophy match/)).toBeEnabled();
+  await skip.click();
+  await expect(skip).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByLabel(/Trophy match/)).toBeDisabled();
+  await page.screenshot({ path: 'e2e/shot-no-stats.png', fullPage: true });
+  await track.click();
+  await expect(page.getByLabel(/Trophy match/)).toBeEnabled();
+  const ps = ['Nia', 'Ned', 'Ora', 'Obe'].map((n, i) => ({ id: 'n' + i, name: n + ' ' + tag }));
+  const shell = { name: 'Rounds only ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], createdAt: 1, hidden: true, trophy: true, finished: true, startedAt: 1, startedBy: 'organizer', host: 'organizer',
+    rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: ['n0', 'n1'], b: ['n2', 'n3'], sa: 11, sb: 0 }] }] };
+  const off = 'NS' + tag.toUpperCase();
+  expect((await request.put(API + '/e/' + off, { data: { data: { ...shell, id: off, noStats: true } } })).ok()).toBe(true);
+  const on = 'NY' + tag.toUpperCase();
+  expect((await request.put(API + '/e/' + on, { data: { data: { ...shell, id: on, name: 'Pickle e2e ' + tag, noStats: false } } })).ok()).toBe(true);
+  const board = (await (await request.get(API + '/stats?test=1')).json()).players as { k: string; games: number; pickles: number; trophies: number; silver: number }[];
+  expect(board.find(p => p.k === ps[0].name.toLowerCase())).toMatchObject({ games: 1, trophies: 1, pickles: 0 });
+  expect(board.find(p => p.k === ps[2].name.toLowerCase())).toMatchObject({ games: 1, silver: 1, pickles: 1 });
+  expect(board.find(p => p.k === ('Nia ' + tag).toLowerCase())?.games).toBe(1);
+  const saved = (await (await request.get(API + '/e/' + off)).json()).data;
+  expect(saved.noStats).toBe(true);
+  expect(board.filter(p => p.k.endsWith(tag) && p.games > 1)).toEqual([]);
+  await page.goto(BASE + '#/stats/' + encodeURIComponent(ps[2].name.toLowerCase()));
+  await expect(page.locator('.hist').first().getByLabel('pickle')).toBeVisible();
+  console.log('NOSTATS ' + off + ' ' + on);
+});

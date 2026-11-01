@@ -202,7 +202,14 @@ img.badge{border-radius:50%;object-fit:contain;display:inline-block}
 .trophyCase .trophyList li{padding:.35rem 0;border-top:1px solid #2b3a5a}
 .trophyWin{font-size:1.25rem;font-weight:700;text-align:center;border:2px solid #d4a72c;background:#2a2410}
 .statTabs{gap:.4rem;margin:.5rem 0}
-.trophyCount{flex:none!important;width:auto!important;height:auto!important;min-height:0!important;line-height:1.25!important;align-self:center;display:inline-flex;align-items:center}
+.trophyCount,.silverCount,.pickleCount{flex:none!important;width:auto!important;height:auto!important;min-height:0!important;line-height:1.25!important;align-self:center;display:inline-flex;align-items:center}
+.silverCount{display:inline-flex;margin-left:.35rem;padding:.05rem .45rem;border-radius:999px;background:#243044;color:#d7e2ee;font-weight:800;font-size:.85rem;white-space:nowrap;vertical-align:middle}
+.silverCount.big{font-size:1.25rem;padding:.2rem .7rem}
+.pickleCount{display:inline-flex;margin-left:.35rem;padding:.05rem .45rem;border-radius:999px;background:#1c3320;color:#b6e39a;font-weight:800;font-size:.85rem;white-space:nowrap;vertical-align:middle}
+.pickleCount.big{font-size:1.25rem;padding:.2rem .7rem}
+.silverWin{font-size:1.15rem;font-weight:700;text-align:center;border:2px solid #8ea0b8;background:#1a2230}
+.pickleBadge,.silverBadge,.trophyBadge{margin-left:.3rem}
+.pts .pickleBadge{margin-left:.35rem}
 .uploadBtn{border:1px solid #33456b;border-radius:14px;padding:.8rem .5rem;background:#22304d;font-weight:700}
 .addPastBtn{width:100%;margin:.6rem 0}
 .addedLater{background:#5a4a2b;color:#ffe9c2}

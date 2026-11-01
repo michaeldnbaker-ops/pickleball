@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyWinners, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -148,7 +148,9 @@ function ClubSelect({ value, onChange, id, label, allowAdd, exclude }: { value: 
       <button className="primary" onClick={save} disabled={!nm.trim()}>Save club</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>}
     {err && <p className="warn">{err}</p>}</div>;
 }
-function TrophyBadge({ n, big }: { n?: number; big?: boolean }) { return n ? <span className={'trophyCount' + (big ? ' big' : '')} aria-label={n + (n === 1 ? ' trophy' : ' trophies')}>🏆 x{n}</span> : null; }
+function TrophyBadge({ n, big }: { n?: number; big?: boolean }) { return n ? <span className={'trophyCount' + (big ? ' big' : '')} aria-label={n + (n === 1 ? ' gold trophy' : ' gold trophies')}>🏆 x{n}</span> : null; }
+function SilverBadge({ n, big }: { n?: number; big?: boolean }) { return n ? <span className={'silverCount' + (big ? ' big' : '')} aria-label={n + (n === 1 ? ' silver trophy' : ' silver trophies')}>🥈 x{n}</span> : null; }
+function PickleBadge({ n, big }: { n?: number; big?: boolean }) { return n ? <span className={'pickleCount' + (big ? ' big' : '')} aria-label={n + (n === 1 ? ' pickle' : ' pickles')}>🥒 x{n}</span> : null; }
 function useClubView(): [string, (c: string) => void] { const [c, setC] = useState(S.clubView()); return [c, (x: string) => { S.setClubView(x); setC(x); }]; }
 function Past() {
   const [list, setList] = useState<S.Listed[] | null>(null); const [err, setErr] = useState(false); const [club, setClub] = useClubView();
@@ -277,7 +279,7 @@ function NewEvent() {
   const [courtSet, setCourtSet] = useState<number[]>([1, 2, 3]); const courts = courtSet.length; const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [maxP, setMaxP] = useState(8); const [trophy, setTrophy] = useState(false);
+  const [maxP, setMaxP] = useState(8); const [trophy, setTrophy] = useState(false); const [track, setTrack] = useState(true);
   const [homeClub, setHomeClub] = useState(S.SC); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
   const [clubNames, setClubNames] = useState<{ home: string[][]; away: string[][] }>({ home: [['', ''], ['', '']], away: [['', ''], ['', '']] });
   const isClub = format === 'club';
@@ -294,9 +296,10 @@ function NewEvent() {
     setBusy(true); localStorage.setItem('pb:lastPlace', place);
     players.forEach(S.addToRoster);
     const code = S.newCode();
+    const flags = { ...(track && trophy ? { trophy: true } : {}), ...(track ? {} : { noStats: true }), ...(S.testMode() ? { hidden: true } : {}) };
     const ev: EventT = isClub
-      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), clubName: homeClub, club: newClub(homeClub.trim() || S.SC, awayClub.trim() || 'Visitors', nT), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) }
-      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.clubKey(homeClub) !== S.clubKey(S.SC) ? { clubName: homeClub } : {}), ...(trophy ? { trophy: true } : {}), ...(S.testMode() ? { hidden: true } : {}) };
+      ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), clubName: homeClub, club: newClub(homeClub.trim() || S.SC, awayClub.trim() || 'Visitors', nT), ...flags }
+      : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.clubKey(homeClub) !== S.clubKey(S.SC) ? { clubName: homeClub } : {}), ...flags };
     if (isClub) (['home', 'away'] as const).forEach(sd => clubNames[sd].forEach((t, i) => t.forEach((nm, k) => { if (nm.trim()) setClubSlot(ev, sd, i, k, nm); })));
     S.setOrg(code);
     S.saveLocal(code, ev, true);
@@ -344,7 +347,10 @@ function NewEvent() {
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
       {!isClub && <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>}
-      <label className="row check trophyCheck"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> 🏆 Trophy match — 1st place wins a trophy</label>
+      <label id="track-l">Stats</label>
+      <div role="radiogroup" aria-labelledby="track-l">{([['Track stats', true], ['Just set up rounds (don\'t track)', false]] as const).map(([label, on]) => <button type="button" role="radio" aria-checked={track === on} key={label} className={'card tap fmt ' + (track === on ? 'sel' : '')} onClick={() => { setTrack(on); if (!on) setTrophy(false); }}><span className="radio" aria-hidden="true">{track === on ? '✓' : ''}</span><span className="fmtText"><b>{label}</b></span></button>)}</div>
+      <p className="muted small">{track ? 'Results count in Overall stats, the leaderboard, trophies, and pickles once the match ends.' : 'Matchups and rotations only. This game stays out of Overall stats, the leaderboard, trophies, and pickles.'}</p>
+      <label className="row check trophyCheck"><input type="checkbox" checked={trophy} disabled={!track} onChange={e => setTrophy(e.target.checked)} /> 🏆 Trophy match — 1st place wins gold, 2nd place wins silver</label>
       <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy || (isClub && courts !== nT)} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
 }
@@ -466,7 +472,7 @@ function Courts({ ev, act, me, host }: { ev: EventT; act: Act; nm: (id: string) 
     {ev.finished && <div className="lockNote readOnly" role="note"><Icon n="lock" size={18} /> Match complete · scores are final (read-only)</div>}
     {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
       {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.</p>}
-      {v.r.matches.map((m, i) => <Fragment key={vi + '-' + i}>{ev.club && <div className="clubMatchup">{clubMatchup(ev, m)}</div>}<CourtCard m={m} nm={vnm} me={me} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} /></Fragment>)}
+      {v.r.matches.map((m, i) => <Fragment key={vi + '-' + i}>{ev.club && <div className="clubMatchup">{clubMatchup(ev, m)}</div>}<CourtCard m={m} nm={vnm} me={me} pickles={!ev.noStats} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} /></Fragment>)}
       {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(vnm).join(' · ')}</div></div>}</>}
     {vi === curIdx && !ev.finished && !(lastReg) && canAdvance && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
     {vi === curIdx && !ev.finished && !canAdvance && !lastReg && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> Only {hostName(ev)} (who started the game) can finish it.</div>}
@@ -485,20 +491,21 @@ function Courts({ ev, act, me, host }: { ev: EventT; act: Act; nm: (id: string) 
   </div>;
 }
 
-function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; onName?: (id: string) => void; cn?: (n: number) => string }) {
+function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName, pickles = true }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; onName?: (id: string) => void; cn?: (n: number) => string; pickles?: boolean }) {
   const [a, setA] = useState<number | ''>(m.sa ?? ''); const [b, setB] = useState<number | ''>(m.sb ?? '');
   useEffect(() => { setA(m.sa ?? ''); setB(m.sb ?? ''); }, [m.sa, m.sb]);
   const [edit, setEdit] = useState(false);
   const has = m.sa != null && m.sb != null; const winA = has && m.sa! > m.sb!;
   const mine = !!me && (m.a.includes(me) || m.b.includes(me));
   const entering = !!onScore && (!has || edit);
-  const side = (t: string[], v: number | '', set: (n: number | '') => void, pts: number | undefined, win: boolean, tag: string) => <div className={'side ' + (has && !entering ? (win ? 'win' : 'lose') : '') + (me && t.includes(me) ? ' myside' : '')}>
+  const pickled = (pts: number | undefined, opp: number | undefined) => pickles && has && !entering && pts === 0 && (opp ?? 0) > 0;
+  const side = (t: string[], v: number | '', set: (n: number | '') => void, pts: number | undefined, opp: number | undefined, win: boolean, tag: string) => <div className={'side ' + (has && !entering ? (win ? 'win' : 'lose') : '') + (me && t.includes(me) ? ' myside' : '')}>
     <div className="names" aria-label={'Team ' + tag}>{t.map(p => onName ? <div key={p}><button className={'nameBtn' + (p === me ? ' meName' : '')} aria-label={'Player ' + nm(p) + ' options'} onClick={() => onName(p)}><Avatar name={nm(p)} size={22} /> {nm(p)}</button></div> : <div key={p} className={p === me ? 'meName' : ''}><Avatar name={nm(p)} size={22} /> {nm(p)}</div>)}</div>
-    {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}</div>}
+    {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}{pickled(pts, opp) && <span className="pickleBadge" aria-label="pickle">🥒</span>}</div>}
   </div>;
   return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
     <div className="courtHead"><span className="court">{label ?? 'Court ' + cn(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
-    {side(m.a, a, setA, m.sa, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, has && !winA, 'B')}
+    {side(m.a, a, setA, m.sa, m.sb, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, m.sa, has && !winA, 'B')}
     {onScore && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
       : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
   </div>;
@@ -531,15 +538,15 @@ function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => st
       <div>vs <b>{opps(cur.m).map(id => slotName(ev, id, subRound(cur.r))).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
     <h2>Your games</h2>
-    {mine.map(({ i, r, m, bye }) => m ? <CourtCard key={i} compact m={m} nm={id => slotName(ev, id, subRound(r))} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
-    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} nm={id => slotName(ev, id, n)} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
+    {mine.map(({ i, r, m, bye }) => m ? <CourtCard key={i} compact m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, subRound(r))} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
+    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, n)} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
 
 function Schedule({ ev, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
   return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <CourtCard key={j} m={m} nm={id => slotName(ev, id, subRound(r))} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, subRound(r))} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
     {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(id => slotName(ev, id, subRound(r))).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
@@ -586,21 +593,25 @@ function ClubTeams({ ev, act, edit, me }: { ev: EventT; act: Act; edit: boolean;
     <p className="muted small">Empty visitor spots play as guests (not counted in Overall stats).</p></div>;
 }
 function Standings({ ev, me }: { ev: EventT; me?: string }) {
-  const st = standings(ev); const tw = trophyWinners(ev); const twIds = new Set(tw.map(t => t.id));
-  const [tc, setTc] = useState<Record<string, number>>({});
-  useEffect(() => { const c = ev.format === 'club' && ev.club ? ev.club.home : ev.clubName || S.SC; S.statsBoard(c).then(b => setTc(Object.fromEntries(b.filter(x => x.trophies).map(x => [x.k, x.trophies!])))).catch(() => {}); }, [ev.finished, ev.clubName, ev.format, ev.club]);
+  const st = standings(ev); const pod = trophyPodium(ev); const tw = pod.gold; const sw = pod.silver;
+  const twIds = new Set(tw.map(t => t.id)); const swIds = new Set(sw.map(t => t.id));
+  const pk = Object.fromEntries(pickleCounts(ev).map(p => [p.id, p.n]));
+  const [tc, setTc] = useState<Record<string, { g: number; s: number }>>({});
+  useEffect(() => { const c = ev.format === 'club' && ev.club ? ev.club.home : ev.clubName || S.SC; S.statsBoard(c).then(b => setTc(Object.fromEntries(b.filter(x => x.trophies || x.silver).map(x => [x.k, { g: x.trophies || 0, s: x.silver || 0 }])))).catch(() => {}); }, [ev.finished, ev.clubName, ev.format, ev.club]);
   const teams = unitSize(ev.format) > 1;
+  const life = (name: string) => tc[name.trim().toLowerCase()];
   return <div>
     {ev.addedLater && <PastOwnerBar ev={ev} />}
     {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> {tw.length > 1 ? 'Winners' : 'Winner'}: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
-    <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
-    {ev.trophy && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins a trophy when the game is completed</div>}
+    {sw.length > 0 && <div className="card silverWin" role="status"><span aria-hidden="true">🥈</span> 2nd place: <b>{sw.map(t => t.name).join(' & ')}</b>{sw.length > 1 ? ' (tie)' : ''}</div>}
+    <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.noStats ? <>{ev.finished ? 'Final standings' : 'Live'} · not counted in Overall stats, trophies, or pickles</> : ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
+    {ev.trophy && !ev.finished && !ev.noStats && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins gold, 2nd place wins silver when the game is completed</div>}
     {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>Win%</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="trophy">🏆</span>}<TrophyBadge n={tc[s.name.trim().toLowerCase()]} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp ? Math.round(100 * s.w / s.gp) + '%' : '–'}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
-    <p className="muted small">Ranked by win %, then point differential, then games played. Playoff games not included.</p>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="gold">🏆</span>}{swIds.has(s.id) && <span className="silverBadge" aria-label="silver">🥈</span>}{pk[s.id] ? <span className="pickleBadge" aria-label={pk[s.id] === 1 ? 'pickle' : pk[s.id] + ' pickles'}>🥒{pk[s.id] > 1 ? ' x' + pk[s.id] : ''}</span> : null}<TrophyBadge n={life(s.name)?.g} /><SilverBadge n={life(s.name)?.s} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp ? Math.round(100 * s.w / s.gp) + '%' : '–'}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+    <p className="muted small">Ranked by win %, then point differential, then games played. Playoff games not included. Gold and silver use wins, then point differential.</p>
   </div>;
 }
 
@@ -761,29 +772,29 @@ function Stats({ name }: { name?: string }) {
   const [tab, setTab] = useState<'players' | 'trophies'>('players');
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
     return <div className="page"><Header title={st?.name || name} back="stats" />
-      <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><TrophyBadge n={tro.length} big /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
+      <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><TrophyBadge n={tro.filter(t => t.place !== 'silver').length} big /><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /><PickleBadge n={st?.pickles} big /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
       {picker}
-      <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="trophyCount big">🏆 x{tro.length}</span></div>
-        {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code}><span aria-hidden="true">🏆</span> <b>{t.ev_name}</b> <span className="muted small">{fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></li>)}</ul>
+      <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="row" style={{ gap: '.35rem' }}><span className="trophyCount big">🏆 x{tro.filter(t => t.place !== 'silver').length}</span><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /></span></div>
+        {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code + (t.place || 'gold')}><span aria-hidden="true">{t.place === 'silver' ? '🥈' : '🏆'}</span> <b>{t.ev_name}</b> <span className="muted small">{t.place === 'silver' ? '2nd' : '1st'} · {fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></li>)}</ul>
           : <p className="muted small">No trophies yet{club !== S.SC ? ' for ' + club : ''} — win a Trophy match to earn one.</p>}</div>
       {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
-      {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Trophies', st.trophies || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
+      {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Gold', st.trophies || 0], ['Silver', st.silver || 0], ['Pickles', st.pickles || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
       <h2>Match history</h2>{err && <p className="warn">Couldn't load stats (offline?).</p>}{!hist && !err && <p className="muted">Loading…</p>}
       {hist?.length === 0 && <p className="muted">No scored games yet.</p>}
-      {hist?.map(m => { const onA = m.an.some(x => x.toLowerCase() === k); const mine = onA ? m.an : m.bn, opp = onA ? m.bn : m.an; const pf = onA ? m.sa : m.sb, pa = onA ? m.sb : m.sa; const won = pf > pa; const d = fmtWhen(m.date);
+      {hist?.map(m => { const onA = m.an.some(x => x.toLowerCase() === k); const mine = onA ? m.an : m.bn, opp = onA ? m.bn : m.an; const pf = onA ? m.sa : m.sb, pa = onA ? m.sb : m.sa; const won = pf > pa; const d = fmtWhen(m.date); const pickled = pf === 0 && pa > 0;
         return <div key={m.id} className="card hist"><div className={'res ' + (won ? 'w' : 'l')}>{won ? 'W' : 'L'}</div><div className="grow"><div className="small muted">{d.date} · {m.ev_name}</div>
-          <div>with <b>{mine.filter(x => x.toLowerCase() !== k).join(' & ') || '—'}</b></div><div>vs <b>{opp.join(' & ')}</b></div></div><div className="hScore">{pf}–{pa}</div></div>; })}
+          <div>with <b>{mine.filter(x => x.toLowerCase() !== k).join(' & ') || '—'}</b></div><div>vs <b>{opp.join(' & ')}</b></div></div><div className="hScore">{pf}–{pa}{pickled && <span className="pickleBadge" aria-label="pickle">🥒</span>}</div></div>; })}
     </div>; }
   return <div className="page"><Header title="Overall stats" back="" />
     {picker}
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
     <div className="row statTabs" role="tablist">{(['players', 'trophies'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} className={'chip ' + (tab === t ? 'on' : '')} onClick={() => setTab(t)}>{t === 'players' ? 'Players' : '🏆 Trophies'}</button>)}</div>
-    {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies).sort((a, b) => b.trophies! - a.trophies! || b.wins - a.wins); return tb.length ? <table className="board trophyBoard"><thead><tr><th>#</th><th>Player</th><th>Trophies</th></tr></thead>
-      <tbody>{tb.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={26} /> {b.name}</button></td><td><TrophyBadge n={b.trophies} big /></td></tr>)}</tbody></table>
-      : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins a trophy.</p></div>; })()}
-    {board && board.length > 0 && tab === 'players' && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th></tr></thead>
-      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td></tr>)}</tbody></table>}
+    {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies || b.silver).sort((a, b) => (b.trophies || 0) - (a.trophies || 0) || (b.silver || 0) - (a.silver || 0) || b.wins - a.wins); return tb.length ? <table className="board trophyBoard"><thead><tr><th>#</th><th>Player</th><th>Gold</th><th>Silver</th></tr></thead>
+      <tbody>{tb.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={26} /> {b.name}</button></td><td>{b.trophies ? <TrophyBadge n={b.trophies} big /> : '–'}</td><td>{b.silver ? <SilverBadge n={b.silver} big /> : '–'}</td></tr>)}</tbody></table>
+      : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins gold and 2nd place wins silver.</p></div>; })()}
+    {board && board.length > 0 && tab === 'players' && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th><th aria-label="Pickles">🥒</th></tr></thead>
+      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /><SilverBadge n={b.silver} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td><td>{b.pickles ? <PickleBadge n={b.pickles} /> : '–'}</td></tr>)}</tbody></table>}
     {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
     {admin && <PossibleDupes onMerged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}
@@ -990,7 +1001,7 @@ function AddPast({ code }: { code?: string }) {
     <label htmlFor="past-date">Date played</label><input id="past-date" type="date" max={yday} value={date} onChange={e => setDate(e.target.value)} />
     <ClubSelect id="addpast-club" label="Club" value={club} onChange={setClub} allowAdd />
     <label htmlFor="past-name">Name (optional)</label><input id="past-name" maxLength={60} placeholder="e.g. Friday open play" value={name} onChange={e => setName(e.target.value)} />
-    <label className="row check"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> Trophy match (1st place gets a trophy)</label>
+    <label className="row check"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> Trophy match (1st place wins gold, 2nd place wins silver)</label>
     <datalist id="pastNames">{used.map(n => <option key={n} value={n} />)}</datalist>
     {ms.map((m, i) => <div key={i} className="card pastMatch"><div className="row between"><b>Match {i + 1}</b>{ms.length > 1 && <button className="ghost danger small" aria-label={`Remove match ${i + 1}`} onClick={() => setMs(xs => xs.filter((_, j) => j !== i))}>✕</button>}</div>
       <div className="pmTeams"><div><div className="muted small">Team 1</div>{pin(i, 'a', 0, 'Team 1 player 1')}{pin(i, 'a', 1, 'Team 1 player 2')}<input aria-label={`Match ${i + 1} Team 1 score`} inputMode="numeric" placeholder="Score" value={m.sa} onChange={e => upd(i, x => { x.sa = e.target.value.replace(/\D/g, '').slice(0, 2); })} /></div>

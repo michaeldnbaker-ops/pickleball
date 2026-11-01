@@ -21,6 +21,7 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
   create table if not exists app_admin(hash text primary key);
   alter table stat_matches add column if not exists ca text; alter table stat_matches add column if not exists cb text;
   alter table trophies add column if not exists club text;
+  alter table trophies add column if not exists place text not null default 'gold';
   create table if not exists clubs(k text primary key, name text not null, hidden boolean not null default false, created_at timestamptz not null default now());
   create table if not exists push_subs(endpoint text primary key, p256dh text not null, auth text not null, test boolean not null default false, created_at timestamptz not null default now());
   create table if not exists push_vapid(id int primary key, public_key text not null, private_key text not null);
@@ -29,10 +30,11 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
 interface X { slot: string; from: number; name: string | null }
-interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
+interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; noStats?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 async function syncStats(code: string, ev: Ev) {
   await ensureStats();
+  if (ev.noStats) { await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); return; }
   const name = new Map((ev.players || []).map(p => [p.id, (p.name || '').trim()]));
   // Club vs Club: unnamed visitor spots play as guest players; they are kept out of Overall stats (excl).
   const guestNames = new Set((ev.players || []).filter((p: { guest?: boolean }) => p.guest).map(p => (p.name || "").trim().toLowerCase()));
@@ -56,20 +58,35 @@ async function syncStats(code: string, ev: Ev) {
   for (const r of rows) await pool.query(`insert into stat_matches(id,code,ev_name,date,hidden,ak,bk,an,bn,sa,sb,excl,ca,cb) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     on conflict(id) do update set ev_name=excluded.ev_name, date=excluded.date, hidden=excluded.hidden, ak=excluded.ak, bk=excluded.bk, an=excluded.an, bn=excluded.bn, sa=excluded.sa, sb=excluded.sb, excl=excluded.excl, ca=excluded.ca, cb=excluded.cb, updated_at=now()`, r);
 }
-/** Trophy match: when the game is completed, 1st place (regular rounds: most wins, then point diff; still tied = co-winners) gets a trophy. Guests excluded. */
+/** Trophy match: regular rounds, most wins then point diff. Everyone tied on both shares the place. Gold is 1st; silver is the next distinct place (none if everyone is tied for 1st). Guests excluded. */
 export function trophyWinners(rows: unknown[][]) {
   const t = new Map<string, { name: string; w: number; diff: number; club?: string }>();
   for (const r of rows) { if (String(r[0]).split(':')[1].startsWith('p')) continue; const [an, bn, sa, sb, excl] = [r[7] as string[], r[8] as string[], r[9] as number, r[10] as number, r[11] as string[]];
     for (const [ns, d] of [[an, sa - sb], [bn, sb - sa]] as [string[], number][]) for (const n of ns) { const k = n.trim().toLowerCase(); if (excl.includes(k) || k === '?') continue;
       const e = t.get(k) || { name: n.trim(), w: 0, diff: 0, club: (ns === an ? r[12] : r[13]) as string | undefined }; e.w += d > 0 ? 1 : 0; e.diff += d; t.set(k, e); } }
-  const all = [...t.entries()]; if (!all.length) return [];
-  const best = all.reduce((b, [, e]) => e.w > b.w || (e.w === b.w && e.diff > b.diff) ? e : b, all[0][1]);
-  return all.filter(([, e]) => e.w === best.w && e.diff === best.diff).map(([k, e]) => ({ k, ...e }));
+  const all = [...t.entries()].sort(([, a], [, b]) => b.w - a.w || b.diff - a.diff); if (!all.length) return [];
+  const same = (e: { w: number; diff: number }, b: { w: number; diff: number }) => e.w === b.w && e.diff === b.diff;
+  const gold = all[0][1]; const rest = all.filter(([, e]) => !same(e, gold));
+  const out = all.filter(([, e]) => same(e, gold)).map(([k, e]) => ({ k, ...e, place: 'gold' as const }));
+  if (rest.length) { const s = rest[0][1]; for (const [k, e] of rest) if (same(e, s)) out.push({ k, ...e, place: 'silver' as const }); }
+  return out;
+}
+/** Trophies are written only for a finished Trophy match that is tracking stats. */
+export function trophyAwards(ev: { trophy?: boolean; finished?: boolean; noStats?: boolean }, rows: unknown[][]) {
+  if (ev.noStats || !ev.trophy || !ev.finished) return [];
+  return trophyWinners(rows);
+}
+/** Existing gold is never replaced. Once a game has any gold row, only missing silver (for players who do not already have gold) is added. */
+export function mergeAwards<T extends { k: string; place: 'gold' | 'silver' }>(existingGold: string[], awards: T[]): T[] {
+  if (existingGold.length) { const have = new Set(existingGold); return awards.filter(a => a.place === 'silver' && !have.has(a.k)); }
+  return awards;
 }
 async function syncTrophies(code: string, ev: Ev, rows: unknown[][]) {
-  await pool.query('delete from trophies where code=$1', [code]);
-  if (!ev.trophy || !ev.finished) return;
-  for (const w of trophyWinners(rows)) await pool.query('insert into trophies(code,k,name,ev_name,date,hidden,w,diff,club) values($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict do nothing', [code, w.k, w.name, ev.name || '', ev.date || '', !!ev.hidden, w.w, w.diff, w.club || clubOf(ev)]);
+  if (ev.noStats || !ev.trophy || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
+  const gold = (await pool.query("select k from trophies where code=$1 and coalesce(place,'gold') <> 'silver'", [code])).rows.map(r => r.k as string);
+  // 2nd place can move if a past game's scores are edited. Gold rows are not deleted or updated.
+  await pool.query("delete from trophies where code=$1 and place = 'silver'", [code]);
+  for (const w of mergeAwards(gold, trophyWinners(rows))) await pool.query('insert into trophies(code,k,name,ev_name,date,hidden,w,diff,club,place) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict do nothing', [code, w.k, w.name, ev.name || '', ev.date || '', !!ev.hidden, w.w, w.diff, w.club || clubOf(ev), w.place]);
 }
 const sha = async (x: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x)))).map(b => b.toString(16).padStart(2, '0')).join('');
 async function isAdmin(req: Request) { const k = req.headers.get('x-admin'); if (!k || k.length < 16) return false; const { rows } = await pool.query('select 1 from app_admin where hash=$1', [await sha(k)]); return rows.length > 0; }
@@ -149,14 +166,16 @@ export default {
         await ensureStats(); const club = ck(url.searchParams.get('club') || SC);
         const { rows } = await pool.query(`with p as (${PER}) select k, (array_agg(n order by date desc))[1] as name, count(*)::int games, sum((pf>pa)::int)::int wins, sum((pf<pa)::int)::int losses,
           sum(pf)::int pf, sum(pa)::int pa, sum(pf-pa)::int diff, count(distinct code)::int events,
-          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1) and lower(coalesce(t.club,'Stone Creek')) = $2) trophies from p group by k order by wins desc, diff desc, games desc limit ${test ? 3000 : 500}`, [test, club]); // test mode: hidden e2e players pile up
+          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1) and lower(coalesce(t.club,'Stone Creek')) = $2 and coalesce(t.place,'gold') = 'gold') trophies,
+          (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1) and lower(coalesce(t.club,'Stone Creek')) = $2 and t.place = 'silver') silver,
+          sum((pf = 0 and pa > 0)::int)::int pickles from p group by k order by wins desc, diff desc, games desc limit ${test ? 3000 : 500}`, [test, club]); // test mode: hidden e2e players pile up
         return j({ players: rows });
       }
       if (url.pathname === '/stats/player' && req.method === 'GET') {
         await ensureStats(); const k = (url.searchParams.get('name') || '').trim().toLowerCase(); const club = ck(url.searchParams.get('club') || SC);
         const { rows } = await pool.query(`select id, code, ev_name, date, an, bn, sa, sb from stat_matches where ($2 or hidden=false) and not ($1 = any(excl))
           and (($1 = any(ak) and lower(coalesce(ca,'Stone Creek')) = $3) or ($1 = any(bk) and lower(coalesce(cb,ca,'Stone Creek')) = $3)) order by date desc, id desc limit 500`, [k, test, club]);
-        const tr = await pool.query(`select code, ev_name, date, w, diff from trophies where k=$1 and (hidden=false or $2) and lower(coalesce(club,'Stone Creek')) = $3 order by date desc`, [k, test, club]);
+        const tr = await pool.query(`select code, ev_name, date, w, diff, coalesce(place,'gold') as place from trophies where k=$1 and (hidden=false or $2) and lower(coalesce(club,'Stone Creek')) = $3 order by date desc`, [k, test, club]);
         return j({ matches: rows, trophies: tr.rows });
       }
       if (url.pathname === '/stats/dupes' && req.method === 'GET') {
@@ -321,7 +340,7 @@ export default {
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
           if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
-          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy', 'clubName'] as const)
+          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy', 'clubName', 'noStats'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
           // Players can still join, and the host can add or drop. The round in progress (and every scored round) stays.
           const roster = rosterWrite(cur, body.data, isStarter); if (roster.error) return j({ error: roster.error, data: cur }, 409);

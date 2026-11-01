@@ -18,7 +18,8 @@ export interface EventT {
   courtSet?: number[]; // courts picked on Create by letter (1=A, 2=B, 4=D…), sorted; length = courts. Missing = A, B, C… (older games)
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
   clubName?: string; // stats club (missing = Stone Creek; Club vs Club = home club)
-  trophy?: boolean; // Trophy match: 1st place gets a trophy when the game is completed
+  trophy?: boolean; // Trophy match: 1st place wins gold and 2nd place wins silver when the game is completed and stats are tracked
+  noStats?: boolean; // "Just set up rounds (don't track)": matchups and rotations only. Left out of stats, the leaderboard, trophies, and pickles.
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
 }
@@ -522,13 +523,43 @@ export function clubStandings(ev: EventT) {
   return { home: sort(home), away: sort(away), totals: { home: tot(home), away: tot(away) } };
 }
 
-/** Trophy match: 1st place among players who played (most wins, then point diff; still tied = co-winners). Guests excluded. Same rule as the server. */
-export function trophyWinners(ev: EventT) {
-  if (!ev.trophy || !ev.finished) return [];
-  const st = standings(ev).filter(s => s.gp > 0 && !/^guest$/i.test(s.name.trim()) && !ev.players.find(p => p.id === s.id)?.guest);
-  if (!st.length) return [];
-  const b = st.reduce((x, s) => s.w > x.w || (s.w === x.w && s.diff > x.diff) ? s : x, st[0]);
-  return st.filter(s => s.w === b.w && s.diff === b.diff);
+const eligible = (ev: EventT) => standings(ev).filter(s => s.gp > 0 && !isGuest(s.name) && !ev.players.find(p => p.id === s.id)?.guest);
+const ahead = (a: Standing, b: Standing) => a.w > b.w || (a.w === b.w && a.diff > b.diff);
+/** Trophy match: regular-round standings, most wins then point differential. Ties on both share the place. Guests excluded. Untracked games award nothing. Same rule as the server. */
+export function trophyPodium(ev: EventT): { gold: Standing[]; silver: Standing[] } {
+  if (!ev.trophy || !ev.finished || ev.noStats) return { gold: [], silver: [] };
+  const st = eligible(ev);
+  if (!st.length) return { gold: [], silver: [] };
+  const top = st.reduce((x, s) => ahead(s, x) ? s : x, st[0]);
+  const gold = st.filter(s => s.w === top.w && s.diff === top.diff);
+  const rest = st.filter(s => s.w !== top.w || s.diff !== top.diff);
+  if (!rest.length) return { gold, silver: [] };
+  const next = rest.reduce((x, s) => ahead(s, x) ? s : x, rest[0]);
+  return { gold, silver: rest.filter(s => s.w === next.w && s.diff === next.diff) };
+}
+/** Gold winners only (1st place). */
+export function trophyWinners(ev: EventT) { return trophyPodium(ev).gold; }
+
+/** A pickle is a finished game lost without scoring (11–0, 15–0, or any X–0). One per player on that team. Untracked games and guests award none. */
+export function pickleCounts(ev: EventT): { id: string; name: string; n: number }[] {
+  if (ev.noStats) return [];
+  const map = new Map<string, { id: string; name: string; n: number }>();
+  const played = [...ev.rounds, ...(ev.plan || []).filter(r => r.matches.some(m => m.sa != null || m.sb != null))];
+  for (const r of played) for (const m of r.matches) {
+    if (!scored(m)) continue;
+    const losers = m.sa === 0 ? m.a : m.sb === 0 ? m.b : null;
+    if (!losers) continue;
+    const rn = subRound(r);
+    for (const id0 of losers) {
+      const sn = subAt(ev, id0, rn);
+      const orig = ev.players.find(p => p.id === id0);
+      if (sn ? isGuest(sn) : (isGuest(orig?.name || '') || !!orig?.guest)) continue;
+      const id = sn ? 'sub:' + id0 + ':' + sn.toLowerCase() : id0;
+      const name = sn ? slotName(ev, id0, rn) : (orig?.name || '?');
+      const e = map.get(id) || { id, name, n: 0 }; e.n++; map.set(id, e);
+    }
+  }
+  return [...map.values()];
 }
 
 export const pct = (w: number, gp: number) => gp > 0 ? w / gp : -1;
