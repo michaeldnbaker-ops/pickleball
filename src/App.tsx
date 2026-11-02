@@ -805,7 +805,7 @@ function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophie
   return <ol className={'lb board' + (players ? '' : ' trophyBoard')}>
     <li className="lbSlot"><div className="lbHead" aria-hidden="true">
       <span>#</span><span className="lbHName">Player</span>
-      {players ? <><span>W-L</span><span>Win%</span><span>+/-</span><span className="lbHAw">Awards</span></> : <><span>Gold</span><span>Silver</span></>}
+      {players ? <><span>W-L</span><span>Win%</span><span>GP</span><span>+/-</span><span className="lbHAw">Awards</span></> : <><span>Gold</span><span>Silver</span></>}
     </div></li>
     {rows.map((b, i) => {
       const pct = b.games ? Math.round(100 * b.wins / b.games) + '%' : '–';
@@ -814,6 +814,7 @@ function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophie
         <FitName name={b.name} />
         {players && <span className="lbWl" aria-label={b.wins + ' wins, ' + b.losses + ' losses'}>{b.wins}-{b.losses}</span>}
         {players && <span className="lbPct">{pct}</span>}
+        {players && <span className="lbGp" aria-label={b.games + ' games played'}>{b.games}</span>}
         {players && <span className="lbDiff">{(b.diff > 0 ? '+' : '') + b.diff}</span>}
         {players
           ? <span className="lbAw"><CountMark kind="gold" n={b.trophies || 0} /><CountMark kind="silver" n={b.silver || 0} /><CountMark kind="pickle" n={b.pickles || 0} /></span>

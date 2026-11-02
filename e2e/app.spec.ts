@@ -1250,6 +1250,8 @@ test('overall stats show full names on narrow phones; number cells stay one line
     const clipped = await longName.evaluate(el => getComputedStyle(el).textOverflow === 'ellipsis' || el.scrollWidth > el.clientWidth + 1);
     expect(clipped, 'name is cut mid-word at ' + width).toBe(false);
     expect(await page.locator('.lbHead').getByText('Win%').isVisible()).toBe(true);
+    expect(await page.locator('.lbHead').getByText('GP').isVisible()).toBe(true);
+    await expect(page.locator('.lbRow', { hasText: 'Jeff Stempel' }).locator('.lbGp')).toHaveText('200');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: `e2e/shot-narrow-stats-${width}.png`, fullPage: true });
     await page.getByRole('tab', { name: /Trophies/ }).click(); await expect(page.locator('ol.trophyBoard')).toBeVisible(); await page.screenshot({ path: `e2e/shot-narrow-trophies-${width}.png`, fullPage: true });
