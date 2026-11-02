@@ -123,25 +123,22 @@ details{margin:8px 0}summary{font-size:1.05rem;font-weight:800;padding:12px 0;cu
 .sv{font-size:1.3rem;font-weight:900;font-family:'Montserrat Variable',sans-serif}.sl{font-size:.68rem;color:var(--mut);text-transform:uppercase;font-weight:700}
 .hist{display:flex;align-items:flex-start;gap:10px}.hist .grow,.hist .grow div,.hist .grow b{white-space:normal;overflow-wrap:anywhere}.res{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:900;flex:none;margin-top:2px}.res.w{background:var(--sky);color:var(--priFg)}.res.l{background:#39456A;color:#E6E9F0}
 .hScore{font-size:1.15rem;font-weight:900;flex:none;white-space:nowrap;padding-top:6px}.linkBtn{all:unset;cursor:pointer;font-weight:700;color:var(--fg);text-decoration:underline dotted;overflow-wrap:anywhere}.board tr.tap{cursor:pointer}
-/* Leaderboard: line 1 is rank, name, W-L, and +/- when it fits. Line 2 sits under the name: gold, silver, pickles. */
-ol.lb{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
-button.lbRow{display:flex;flex-direction:row;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:12px;min-height:0;font-weight:400;background:var(--card);border:1px solid var(--line);border-radius:14px}
-.lbRank{flex:none;width:1.6rem;font-weight:800;font-variant-numeric:tabular-nums;color:var(--mut);line-height:1.3;padding-top:6px;text-align:right}
-.lbMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;container-type:inline-size;container-name:lb}
-.lbLine1{display:grid;grid-template-columns:32px minmax(0,1fr);column-gap:8px;align-items:start}
-.lbLine1.rec{grid-template-columns:32px minmax(0,1fr) 4.7rem 3.3rem}
-.lbLine1 .av{grid-row:1;grid-column:1;margin:0}
-.lbName{grid-column:2;font-weight:700;font-size:1.05rem;line-height:1.3;white-space:normal;overflow-wrap:anywhere;text-align:left;padding-top:4px}
-.lbWl,.lbDiff,.lbDiff2{font-weight:800;font-variant-numeric:tabular-nums;font-size:1rem;line-height:1.3;white-space:nowrap;text-align:right;padding-top:4px}
-.lbWl{grid-column:3}.lbDiff{grid-column:4}
-.lbAwards{display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:4px 12px;margin-left:40px}
-.lbDiff2{display:none;text-align:left;padding-top:0}
-.lbAwards .trophyCount,.lbAwards .silverCount,.lbAwards .pickleCount{margin:0;padding:0;background:none;font-size:1rem;line-height:1.3}
-@container lb (max-width:15rem){
-  .lbLine1.rec{grid-template-columns:32px minmax(0,1fr) 4.7rem}
-  .lbLine1 .lbDiff{display:none}
-  .lbDiff2{display:inline}
-}
+/* One compact leaderboard line. Columns are shared so W-L, win % and +/- line up. */
+ol.lb{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:1.45rem minmax(0,1fr) 3.15rem 2.25rem 2.4rem max-content;column-gap:4px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+ol.lb.trophyBoard{grid-template-columns:1.3rem minmax(0,1fr) 3.5rem 3.5rem}
+.lbSlot{display:contents}
+.lbHead,button.lbRow{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;align-items:center;column-gap:4px}
+.lbHead{padding:3px 6px;font-size:.62rem;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--mut);background:var(--skySoft);line-height:1.2}
+.lbHead span:nth-child(n+3){text-align:right}
+.lbHAw{text-align:right}
+button.lbRow{min-height:0;padding:4px 6px;border:none;border-radius:0;border-bottom:1px solid var(--line);background:transparent;font-size:.8rem;font-weight:600;text-align:left}
+ol.lb li:last-child button.lbRow{border-bottom:none}
+.lbRank{font-weight:800;font-variant-numeric:tabular-nums;color:var(--mut);text-align:right;font-size:.75rem}
+.lbName{display:block;min-width:0;max-width:100%;font-weight:700;font-size:.86rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.lbName.sm{font-size:.74rem}
+.lbWl,.lbPct,.lbDiff{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;white-space:nowrap;font-size:.78rem}
+.lbAw{display:flex;justify-content:flex-end;align-items:center;gap:4px;white-space:nowrap;min-height:1em}
+.lbAw .trophyCount,.lbAw .silverCount,.lbAw .pickleCount{margin:0;padding:0;background:none;font-size:.75rem;font-weight:700;line-height:1}
 /* player form */
 .pform label{margin:0 0 6px}.pform .nameInput{width:100%;font-size:1.15rem}
 .pform .nameHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 6px;flex-wrap:wrap}.pform .nameHead label{margin:0}

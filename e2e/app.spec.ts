@@ -1242,10 +1242,14 @@ test('overall stats show full names on narrow phones; number cells stay one line
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true); };
     await page.goto(BASE + '#/stats'); await expect(page.locator('ol.board')).toBeVisible();
     await expect(page.locator('ol.board')).toContainText('100-100'); await expect(page.locator('ol.board')).toContainText('+123');
-    const longName = page.locator('.lbName', { hasText: 'Alexandria Montgomery-Wellington' });
+    const longName = page.locator('.lbName', { hasText: /Alexandria/ }).first();
     await expect(longName).toBeVisible();
-    const clipped = await longName.evaluate(el => { const s = getComputedStyle(el); return s.textOverflow === 'ellipsis' || s.whiteSpace === 'nowrap' || el.scrollWidth > el.clientWidth + 1; });
-    expect(clipped, 'long name is clipped at ' + width).toBe(false);
+    const shown = (await longName.textContent()) || '';
+    expect(['Alexandria Montgomery-Wellington', 'Alexandria M.']).toContain(shown);
+    if (shown !== 'Alexandria Montgomery-Wellington') expect(await longName.getAttribute('title')).toBe('Alexandria Montgomery-Wellington');
+    const clipped = await longName.evaluate(el => getComputedStyle(el).textOverflow === 'ellipsis' || el.scrollWidth > el.clientWidth + 1);
+    expect(clipped, 'name is cut mid-word at ' + width).toBe(false);
+    expect(await page.locator('.lbHead').getByText('Win%').isVisible()).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: `e2e/shot-narrow-stats-${width}.png`, fullPage: true });
     await page.getByRole('tab', { name: /Trophies/ }).click(); await expect(page.locator('ol.trophyBoard')).toBeVisible(); await page.screenshot({ path: `e2e/shot-narrow-trophies-${width}.png`, fullPage: true });

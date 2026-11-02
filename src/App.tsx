@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
@@ -764,34 +764,63 @@ function PossibleDupes({ onMerged }: { onMerged: () => void }) {
     {msg && <p role="status">{msg}</p>}</div>;
 }
 function CountMark({ kind, n }: { kind: 'gold' | 'silver' | 'pickle'; n: number }) {
+  if (!n) return null;
   const icon = kind === 'gold' ? '🏆' : kind === 'silver' ? '🥈' : '🥒';
   const cls = kind === 'gold' ? 'trophyCount' : kind === 'silver' ? 'silverCount' : 'pickleCount';
   const word = kind === 'pickle' ? 'pickle' : kind + ' trophy';
   return <span className={cls} aria-label={n + ' ' + word + (n === 1 ? '' : 's')}>{icon} x{n}</span>;
 }
-/** Line 1: rank, full name, W-L, and +/- when it fits. Line 2, under the name: gold, silver, pickles. */
+/** First name plus the last initial, used only when the full name cannot fit on one line. */
+function shortName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return name;
+  return parts[0] + ' ' + parts[parts.length - 1].charAt(0).toUpperCase() + '.';
+}
+/** Full name, then a smaller size, then "First L." Never clips a word with an ellipsis. */
+function FitName({ name }: { name: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [view, setView] = useState({ text: name, small: false });
+  useLayoutEffect(() => {
+    const el = ref.current; const parent = el?.parentElement; if (!el || !parent) return;
+    let w = parent.clientWidth;
+    const ro = new ResizeObserver(() => { const nw = parent.clientWidth; if (nw !== w) { w = nw; setView({ text: name, small: false }); } });
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [name]);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const fits = () => el.scrollWidth <= el.clientWidth + 1;
+    const short = shortName(name);
+    if (fits()) return;
+    if (view.text === name && !view.small) { setView({ text: name, small: true }); return; }
+    if (view.text === name && view.small && short !== name) { setView({ text: short, small: false }); return; }
+    if (view.text !== name && !view.small) { setView({ text: short, small: true }); return; }
+    if (view.text !== name && view.text !== short) setView({ text: name, small: false });
+  }, [name, view]);
+  return <span ref={ref} className={'lbName' + (view.small ? ' sm' : '')} title={view.text === name ? undefined : name}>{view.text}</span>;
+}
+/** One compact line: rank, name, W-L, win %, +/-, then only the awards they have. */
 function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophies' }) {
-  return <ol className={'lb board' + (mode === 'trophies' ? ' trophyBoard' : '')}>{rows.map((b, i) => {
-    const diff = (b.diff > 0 ? '+' : '') + b.diff;
-    return <li key={b.k}>
-      <button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
+  const players = mode === 'players';
+  return <ol className={'lb board' + (players ? '' : ' trophyBoard')}>
+    <li className="lbSlot"><div className="lbHead" aria-hidden="true">
+      <span>#</span><span className="lbHName">Player</span>
+      {players ? <><span>W-L</span><span>Win%</span><span>+/-</span><span className="lbHAw">Awards</span></> : <><span>Gold</span><span>Silver</span></>}
+    </div></li>
+    {rows.map((b, i) => {
+      const pct = b.games ? Math.round(100 * b.wins / b.games) + '%' : '–';
+      return <li key={b.k} className="lbSlot"><button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
         <span className="lbRank">{i + 1}</span>
-        <span className="lbMain">
-          <span className={'lbLine1' + (mode === 'players' ? ' rec' : '')}>
-            <Avatar name={b.name} size={32} />
-            <span className="lbName">{b.name}</span>
-            {mode === 'players' && <span className="lbWl" aria-label={b.wins + ' wins, ' + b.losses + ' losses'}>{b.wins}-{b.losses}</span>}
-            {mode === 'players' && <span className="lbDiff">{diff}</span>}
-          </span>
-          <span className="lbAwards">
-            {mode === 'players' && <span className="lbDiff2">{diff}</span>}
-            <CountMark kind="gold" n={b.trophies || 0} />
-            <CountMark kind="silver" n={b.silver || 0} />
-            {mode === 'players' && <CountMark kind="pickle" n={b.pickles || 0} />}
-          </span>
-        </span>
+        <FitName name={b.name} />
+        {players && <span className="lbWl" aria-label={b.wins + ' wins, ' + b.losses + ' losses'}>{b.wins}-{b.losses}</span>}
+        {players && <span className="lbPct">{pct}</span>}
+        {players && <span className="lbDiff">{(b.diff > 0 ? '+' : '') + b.diff}</span>}
+        {players
+          ? <span className="lbAw"><CountMark kind="gold" n={b.trophies || 0} /><CountMark kind="silver" n={b.silver || 0} /><CountMark kind="pickle" n={b.pickles || 0} /></span>
+          : <><span className="lbAw"><CountMark kind="gold" n={b.trophies || 0} /></span><span className="lbAw"><CountMark kind="silver" n={b.silver || 0} /></span></>}
       </button></li>;
-  })}</ol>;
+    })}
+  </ol>;
 }
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
