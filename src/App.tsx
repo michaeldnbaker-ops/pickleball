@@ -769,24 +769,29 @@ function CountMark({ kind, n }: { kind: 'gold' | 'silver' | 'pickle'; n: number 
   const word = kind === 'pickle' ? 'pickle' : kind + ' trophy';
   return <span className={cls} aria-label={n + ' ' + word + (n === 1 ? '' : 's')}>{icon} x{n}</span>;
 }
-/** Phone leaderboard: line 1 is rank and the full name; line 2 is the record and the award counts. */
+/** Line 1: rank, full name, W-L, and +/- when it fits. Line 2, under the name: gold, silver, pickles. */
 function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophies' }) {
-  return <ol className={'lb board' + (mode === 'trophies' ? ' trophyBoard' : '')}>{rows.map((b, i) => <li key={b.k}>
-    <button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
-      <span className="lbTop"><span className="lbRank">{i + 1}</span><Avatar name={b.name} size={32} /><span className="lbName">{b.name}</span></span>
-      {mode === 'players'
-        ? <span className="lbStats">
-          <span className="lbStat"><b>{b.wins}-{b.losses}</b><span className="lbLbl">W-L</span></span>
-          <span className="lbStat"><b>{b.diff > 0 ? '+' : ''}{b.diff}</b><span className="lbLbl">+/-</span></span>
-          <span className="lbStat"><CountMark kind="gold" n={b.trophies || 0} /><span className="lbLbl">Gold</span></span>
-          <span className="lbStat"><CountMark kind="silver" n={b.silver || 0} /><span className="lbLbl">Silver</span></span>
-          <span className="lbStat"><CountMark kind="pickle" n={b.pickles || 0} /><span className="lbLbl">Pickles</span></span>
+  return <ol className={'lb board' + (mode === 'trophies' ? ' trophyBoard' : '')}>{rows.map((b, i) => {
+    const diff = (b.diff > 0 ? '+' : '') + b.diff;
+    return <li key={b.k}>
+      <button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
+        <span className="lbRank">{i + 1}</span>
+        <span className="lbMain">
+          <span className={'lbLine1' + (mode === 'players' ? ' rec' : '')}>
+            <Avatar name={b.name} size={32} />
+            <span className="lbName">{b.name}</span>
+            {mode === 'players' && <span className="lbWl" aria-label={b.wins + ' wins, ' + b.losses + ' losses'}>{b.wins}-{b.losses}</span>}
+            {mode === 'players' && <span className="lbDiff">{diff}</span>}
+          </span>
+          <span className="lbAwards">
+            {mode === 'players' && <span className="lbDiff2">{diff}</span>}
+            <CountMark kind="gold" n={b.trophies || 0} />
+            <CountMark kind="silver" n={b.silver || 0} />
+            {mode === 'players' && <CountMark kind="pickle" n={b.pickles || 0} />}
+          </span>
         </span>
-        : <span className="lbStats lbAwards">
-          <span className="lbStat"><CountMark kind="gold" n={b.trophies || 0} /><span className="lbLbl">Gold</span></span>
-          <span className="lbStat"><CountMark kind="silver" n={b.silver || 0} /><span className="lbLbl">Silver</span></span>
-        </span>}
-    </button></li>)}</ol>;
+      </button></li>;
+  })}</ol>;
 }
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);

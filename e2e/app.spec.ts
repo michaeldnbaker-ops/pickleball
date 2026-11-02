@@ -501,7 +501,7 @@ test('typed-only scores: empty "–", number pad, auto-advance, any score (15–
   await page.goto(BASE); await page.getByRole('button', { name: /Past matches/ }).click(); await expect(page.getByRole('heading', { name: 'Past matches' })).toBeVisible();
   await page.locator('.game').first().waitFor(); await page.screenshot({ path: 'e2e/shot-past-matches.png' });
   await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.getByText('Final standings · match complete')).toBeVisible();
-  await page.goto(BASE); await page.getByRole('button', { name: /Overall stats/ }).click(); await expect(page.getByRole('heading', { name: 'Overall stats' })).toBeVisible(); await expect(page.locator('.lbLbl', { hasText: 'W-L' }).first()).toBeVisible();
+  await page.goto(BASE); await page.getByRole('button', { name: /Overall stats/ }).click(); await expect(page.getByRole('heading', { name: 'Overall stats' })).toBeVisible(); await expect(page.locator('.lbWl').first()).toBeVisible();
   await page.locator('.lbRow', { hasText: winA }).first().waitFor(); await page.screenshot({ path: 'e2e/shot-overall-stats.png' });
   await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
   await expect(page.locator('.hist').first()).toContainText('15–13');
