@@ -763,6 +763,31 @@ function PossibleDupes({ onMerged }: { onMerged: () => void }) {
       <button className="primary" onClick={() => merge(d)}>Merge</button></div>)}
     {msg && <p role="status">{msg}</p>}</div>;
 }
+function CountMark({ kind, n }: { kind: 'gold' | 'silver' | 'pickle'; n: number }) {
+  const icon = kind === 'gold' ? '🏆' : kind === 'silver' ? '🥈' : '🥒';
+  const cls = kind === 'gold' ? 'trophyCount' : kind === 'silver' ? 'silverCount' : 'pickleCount';
+  const word = kind === 'pickle' ? 'pickle' : kind + ' trophy';
+  return <span className={cls} aria-label={n + ' ' + word + (n === 1 ? '' : 's')}>{icon} x{n}</span>;
+}
+/** Phone leaderboard: line 1 is rank and the full name; line 2 is the record and the award counts. */
+function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophies' }) {
+  return <ol className={'lb board' + (mode === 'trophies' ? ' trophyBoard' : '')}>{rows.map((b, i) => <li key={b.k}>
+    <button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
+      <span className="lbTop"><span className="lbRank">{i + 1}</span><Avatar name={b.name} size={32} /><span className="lbName">{b.name}</span></span>
+      {mode === 'players'
+        ? <span className="lbStats">
+          <span className="lbStat"><b>{b.wins}-{b.losses}</b><span className="lbLbl">W-L</span></span>
+          <span className="lbStat"><b>{b.diff > 0 ? '+' : ''}{b.diff}</b><span className="lbLbl">+/-</span></span>
+          <span className="lbStat"><CountMark kind="gold" n={b.trophies || 0} /><span className="lbLbl">Gold</span></span>
+          <span className="lbStat"><CountMark kind="silver" n={b.silver || 0} /><span className="lbLbl">Silver</span></span>
+          <span className="lbStat"><CountMark kind="pickle" n={b.pickles || 0} /><span className="lbLbl">Pickles</span></span>
+        </span>
+        : <span className="lbStats lbAwards">
+          <span className="lbStat"><CountMark kind="gold" n={b.trophies || 0} /><span className="lbLbl">Gold</span></span>
+          <span className="lbStat"><CountMark kind="silver" n={b.silver || 0} /><span className="lbLbl">Silver</span></span>
+        </span>}
+    </button></li>)}</ol>;
+}
 function Stats({ name }: { name?: string }) {
   const [board, setBoard] = useState<S.Stat[] | null>(null); const [hist, setHist] = useState<S.StatMatch[] | null>(null); const [err, setErr] = useState(false);
   const [tro, setTro] = useState<S.Trophy[]>([]); const [editIc, setEditIc] = useState(false); const [club, setClub] = useClubView();
@@ -775,7 +800,7 @@ function Stats({ name }: { name?: string }) {
       <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><TrophyBadge n={tro.filter(t => t.place !== 'silver').length} big /><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /><PickleBadge n={st?.pickles} big /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
       {picker}
       <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="row" style={{ gap: '.35rem' }}><span className="trophyCount big">🏆 x{tro.filter(t => t.place !== 'silver').length}</span><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /></span></div>
-        {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code + (t.place || 'gold')}><span aria-hidden="true">{t.place === 'silver' ? '🥈' : '🏆'}</span> <b>{t.ev_name}</b> <span className="muted small">{t.place === 'silver' ? '2nd' : '1st'} · {fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></li>)}</ul>
+        {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code + (t.place || 'gold')} className="trophyItem"><span aria-hidden="true">{t.place === 'silver' ? '🥈' : '🏆'}</span><span className="trophyItemBody"><b>{t.ev_name}</b><span className="muted small">{t.place === 'silver' ? '2nd' : '1st'} · {fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></span></li>)}</ul>
           : <p className="muted small">No trophies yet{club !== S.SC ? ' for ' + club : ''} — win a Trophy match to earn one.</p>}</div>
       {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
       {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Gold', st.trophies || 0], ['Silver', st.silver || 0], ['Pickles', st.pickles || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
@@ -790,11 +815,9 @@ function Stats({ name }: { name?: string }) {
     {err && <p className="warn">Couldn't load stats (offline?).</p>}{!board && !err && <p className="muted">Loading…</p>}
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
     <div className="row statTabs" role="tablist">{(['players', 'trophies'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} className={'chip ' + (tab === t ? 'on' : '')} onClick={() => setTab(t)}>{t === 'players' ? 'Players' : '🏆 Trophies'}</button>)}</div>
-    {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies || b.silver).sort((a, b) => (b.trophies || 0) - (a.trophies || 0) || (b.silver || 0) - (a.silver || 0) || b.wins - a.wins); return tb.length ? <table className="board trophyBoard"><thead><tr><th>#</th><th>Player</th><th>Gold</th><th>Silver</th></tr></thead>
-      <tbody>{tb.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={26} /> {b.name}</button></td><td>{b.trophies ? <TrophyBadge n={b.trophies} big /> : '–'}</td><td>{b.silver ? <SilverBadge n={b.silver} big /> : '–'}</td></tr>)}</tbody></table>
+    {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies || b.silver).sort((a, b) => (b.trophies || 0) - (a.trophies || 0) || (b.silver || 0) - (a.silver || 0) || b.wins - a.wins); return tb.length ? <LeaderList rows={tb} mode="trophies" />
       : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins gold and 2nd place wins silver.</p></div>; })()}
-    {board && board.length > 0 && tab === 'players' && <table className="board"><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>Win%</th><th>GP</th><th>+/-</th><th aria-label="Pickles">🥒</th></tr></thead>
-      <tbody>{board.map((b, i) => <tr key={b.k} className="tap" onClick={() => go('stats/' + encodeURIComponent(b.k))}><td>{i + 1}</td><td><button className="linkBtn"><Avatar name={b.name} size={22} /> {b.name}</button><TrophyBadge n={b.trophies} /><SilverBadge n={b.silver} /></td><td>{b.wins}-{b.losses}</td><td>{b.games ? Math.round(100 * b.wins / b.games) + '%' : '–'}</td><td>{b.games}</td><td>{b.diff > 0 ? '+' : ''}{b.diff}</td><td>{b.pickles ? <PickleBadge n={b.pickles} /> : '–'}</td></tr>)}</tbody></table>}
+    {board && board.length > 0 && tab === 'players' && <LeaderList rows={board} mode="players" />}
     {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
     {admin && <PossibleDupes onMerged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}

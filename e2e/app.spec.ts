@@ -501,8 +501,8 @@ test('typed-only scores: empty "–", number pad, auto-advance, any score (15–
   await page.goto(BASE); await page.getByRole('button', { name: /Past matches/ }).click(); await expect(page.getByRole('heading', { name: 'Past matches' })).toBeVisible();
   await page.locator('.game').first().waitFor(); await page.screenshot({ path: 'e2e/shot-past-matches.png' });
   await page.goto(BASE + '#/e/' + code); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.getByText('Final standings · match complete')).toBeVisible();
-  await page.goto(BASE); await page.getByRole('button', { name: /Overall stats/ }).click(); await expect(page.getByRole('heading', { name: 'Overall stats' })).toBeVisible(); await expect(page.locator('th', { hasText: 'Win%' })).toBeVisible();
-  await page.locator('tr', { hasText: winA }).first().waitFor(); await page.screenshot({ path: 'e2e/shot-overall-stats.png' });
+  await page.goto(BASE); await page.getByRole('button', { name: /Overall stats/ }).click(); await expect(page.getByRole('heading', { name: 'Overall stats' })).toBeVisible(); await expect(page.locator('.lbLbl', { hasText: 'W-L' }).first()).toBeVisible();
+  await page.locator('.lbRow', { hasText: winA }).first().waitFor(); await page.screenshot({ path: 'e2e/shot-overall-stats.png' });
   await page.goto(BASE + '#/stats/' + encodeURIComponent(winA.toLowerCase()));
   await expect(page.locator('.hist').first()).toContainText('15–13');
 });
@@ -1042,8 +1042,8 @@ test('Trophy match: checkbox at Create; 1st place (wins, then diff; co-winners) 
   g2.players = ps.slice(0, 4).map((p, i) => i === 0 ? { id: 't0', name: nm(w0) } : { id: 't' + i, name: 'X' + i + ' ' + tag }); expect((await request.put(API + '/e/' + code2, { data: { data: g2 } })).ok()).toBe(true);
   await page.screenshot({ path: 'e2e/shot-trophy-standings.png', fullPage: true });
   const wn = nm(w0);
-  await page.goto(BASE + '#/stats'); await expect(page.locator('tr', { hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
-  await page.getByRole('tab', { name: /Trophies/ }).click(); const tb = page.locator('.trophyBoard tbody tr');
+  await page.goto(BASE + '#/stats'); await expect(page.locator('.lbRow', { hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
+  await page.getByRole('tab', { name: /Trophies/ }).click(); const tb = page.locator('.trophyBoard .lbRow');
   await expect(tb.filter({ hasText: wn }).locator('.trophyCount')).toHaveText('🏆 x2');
   const counts = await tb.locator('.trophyCount').allTextContents(); const nums = counts.map(t => Number(t.replace(/\D/g, ''))); expect([...nums].sort((a, b) => b - a)).toEqual(nums);
   await page.screenshot({ path: 'e2e/shot-trophy-overall.png', fullPage: true });
@@ -1142,10 +1142,10 @@ test('Clubs: pick/add club at Create (saved for everyone, case-insensitive), sta
   expect(await past(C)).toContain(code); expect(await past('Stone Creek')).not.toContain(code);
   // UI: Overall + Past selectors (default Stone Creek)
   await page.goto(BASE + '#/stats'); await page.evaluate(() => localStorage.removeItem('pb:clubView')); await page.reload();
-  await expect(page.getByLabel('Club')).toHaveValue('Stone Creek'); await expect(page.locator('tr', { hasText: win })).toHaveCount(0);
-  await page.getByLabel('Club').selectOption(C); await expect(page.locator('tr', { hasText: win }).locator('.trophyCount')).toHaveText('🏆 x1');
+  await expect(page.getByLabel('Club')).toHaveValue('Stone Creek'); await expect(page.locator('.lbRow', { hasText: win })).toHaveCount(0);
+  await page.getByLabel('Club').selectOption(C); await expect(page.locator('.lbRow', { hasText: win }).locator('.trophyCount')).toHaveText('🏆 x1');
   await page.screenshot({ path: 'e2e/shot-clubs-overall.png', fullPage: true });
-  await page.locator('tr', { hasText: win }).click(); await expect(page.locator('.trophyList')).toContainText('Clubs e2e ' + tag); await expect(page.locator('.hist')).toHaveCount(1);
+  await page.locator('.lbRow', { hasText: win }).click(); await expect(page.locator('.trophyList')).toContainText('Clubs e2e ' + tag); await expect(page.locator('.hist')).toHaveCount(1);
   await page.goto(BASE + '#/past'); await expect(page.getByLabel('Club')).toHaveValue(C); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toBeVisible();
   await page.screenshot({ path: 'e2e/shot-clubs-past.png', fullPage: true });
   await page.getByLabel('Club').selectOption('Stone Creek'); await expect(page.locator('.game', { hasText: 'Clubs e2e ' + tag })).toHaveCount(0);
@@ -1225,7 +1225,7 @@ test('Add past game: closed game with real date, "Added later" in Past, counts i
   expect(st3.players.filter((p: { k: string }) => p.k.startsWith(('Pst' + t).toLowerCase()))).toEqual([]);
 });
 
-test('stats tables stay one line per cell on narrow phones (3-digit numbers, long names) at 360 and 390 wide', async ({ browser }) => {
+test('overall stats show full names on narrow phones; number cells stay one line at 360 and 390 wide', async ({ browser }) => {
   const big = (k: string, name: string, w: number, l: number, diff: number, tro = 0) => ({ k, name, games: w + l, wins: w, losses: l, pf: 999, pa: 999, diff, events: 3, trophies: tro });
   const players = [big('a', 'Alexandria Montgomery-Wellington', 100, 0, 123, 12), big('b', 'Jeff Stempel', 100, 100, -123, 3), big('c', 'George N Landrum', 11, 10, 18)];
   const ids = ['p1', 'p2', 'p3', 'p4'];
@@ -1240,10 +1240,16 @@ test('stats tables stay one line per cell on narrow phones (3-digit numbers, lon
       const ok = await td.evaluate(el => { const r = document.createRange(); r.selectNodeContents(el); const ts = [...r.getClientRects()].filter(x => x.width > 0).map(x => x.top + x.height / 2); return Math.max(...ts) - Math.min(...ts) < parseFloat(getComputedStyle(el).fontSize) * 0.9 && el.scrollWidth <= el.clientWidth + 1; });
       expect(ok, await td.textContent() + ' wraps at ' + width).toBe(true); }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true); };
-    await page.goto(BASE + '#/stats'); await expect(page.locator('table.board')).toBeVisible();
-    await expect(page.locator('table.board')).toContainText('100-100'); await expect(page.locator('table.board')).toContainText('+123'); await expect(page.locator('table.board')).toContainText('100%');
-    await oneLine(); await page.screenshot({ path: `e2e/shot-narrow-stats-${width}.png`, fullPage: true });
-    await page.getByRole('tab', { name: /Trophies/ }).click(); await expect(page.locator('table.trophyBoard')).toBeVisible(); await page.screenshot({ path: `e2e/shot-narrow-trophies-${width}.png`, fullPage: true }); await oneLine();
+    await page.goto(BASE + '#/stats'); await expect(page.locator('ol.board')).toBeVisible();
+    await expect(page.locator('ol.board')).toContainText('100-100'); await expect(page.locator('ol.board')).toContainText('+123');
+    const longName = page.locator('.lbName', { hasText: 'Alexandria Montgomery-Wellington' });
+    await expect(longName).toBeVisible();
+    const clipped = await longName.evaluate(el => { const s = getComputedStyle(el); return s.textOverflow === 'ellipsis' || s.whiteSpace === 'nowrap' || el.scrollWidth > el.clientWidth + 1; });
+    expect(clipped, 'long name is clipped at ' + width).toBe(false);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: `e2e/shot-narrow-stats-${width}.png`, fullPage: true });
+    await page.getByRole('tab', { name: /Trophies/ }).click(); await expect(page.locator('ol.trophyBoard')).toBeVisible(); await page.screenshot({ path: `e2e/shot-narrow-trophies-${width}.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.goto(BASE + '#/e/WIDE01'); await page.getByRole('button', { name: 'Standings', exact: true }).click(); await expect(page.locator('table')).toContainText('99');
     await oneLine(); await page.screenshot({ path: `e2e/shot-narrow-standings-${width}.png`, fullPage: true });
     await ctx.close();
