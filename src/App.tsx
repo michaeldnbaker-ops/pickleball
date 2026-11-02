@@ -93,7 +93,10 @@ function NotifyGames() {
   useEffect(() => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     let stop = false;
-    navigator.serviceWorker.ready.then(r => r.pushManager.getSubscription()).then(s => { if (!stop && s) setOn(true); }).catch(() => {});
+    navigator.serviceWorker.ready.then(r => r.pushManager.getSubscription()).then(async s => {
+      if (stop || !s) return;
+      try { await S.savePushSub(s); if (!stop) setOn(true); } catch { if (!stop) { setOn(false); setMsg('Notifications are on this phone, but the server does not have them. Turn them on again.'); } }
+    }).catch(() => {});
     return () => { stop = true; };
   }, []);
   const turnOn = async () => {

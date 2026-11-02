@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import crypto from 'node:crypto';
 import ece from 'http_ece';
-import { shouldNotify, gameWhen, noteFor, endpointOk, SITE, encryptPush } from './push';
+import { shouldNotify, gameWhen, noteFor, endpointOk, SITE, encryptPush, pushRequestHeaders } from './push';
 
 describe('new-game notifications', () => {
   it('notifies only a brand-new public game', () => {
@@ -11,6 +11,9 @@ describe('new-game notifications', () => {
     expect(shouldNotify(true, { finished: true })).toBe(false);
     expect(shouldNotify(true, { addedLater: true })).toBe(false);
     expect(shouldNotify(true, null)).toBe(false);
+  });
+  it('asks the phone to deliver immediately', () => {
+    expect(pushRequestHeaders('vapid t=x', 12).Urgency).toBe('high');
   });
   it('text is the game name plus the clock time on the game, and the link opens that game', () => {
     expect(gameWhen('2026-10-29T18:30')).toBe('Thursday, Oct 29 · 6:30 PM');

@@ -81,10 +81,14 @@ function vapidJwt(origin: string, publicKey: string, privateKey: string) {
   const sig = crypto.sign('sha256', Buffer.from(header + '.' + body), { key, dsaEncoding: 'ieee-p1363' });
   return 'vapid t=' + header + '.' + body + '.' + b64url(sig) + ', k=' + publicKey;
 }
+/** Headers for one Web Push request. Urgency high asks the phone (especially iOS) to deliver now instead of waiting for a power-saving window. */
+export function pushRequestHeaders(authorization: string, bytes: number) {
+  return { TTL: '86400', Urgency: 'high', 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', 'Content-Length': bytes, Authorization: authorization };
+}
 function postPush(endpoint: string, body: Buffer, authorization: string): Promise<number> {
   const u = new URL(endpoint);
   return new Promise((resolve, reject) => {
-    const req = https.request({ method: 'POST', hostname: u.hostname, path: u.pathname + u.search, timeout: 8000, headers: { TTL: '86400', 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', 'Content-Length': body.length, Authorization: authorization } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode || 0)); });
+    const req = https.request({ method: 'POST', hostname: u.hostname, path: u.pathname + u.search, timeout: 8000, headers: pushRequestHeaders(authorization, body.length) }, res => { res.resume(); res.on('end', () => resolve(res.statusCode || 0)); });
     req.on('error', reject); req.on('timeout', () => req.destroy(new Error('timeout'))); req.end(body);
   });
 }
@@ -119,19 +123,20 @@ export async function notifySubs(pool: Poolish & { query: (sql: string, params?:
     while (i < subs.length) {
       const sub = subs[i++];
       const r = await sendOne(sub, body);
-      if (r === 'ok') ok++;
-      else if (r === 'gone') await pool.query('delete from push_subs where endpoint=$1', [sub.endpoint]);
+      if (r.result === 'ok') ok++;
+      if (r.result === 'gone') await pool.query('delete from push_subs where endpoint=$1', [sub.endpoint]);
+      else await pool.query('update push_subs set last_status=$2, last_at=now() where endpoint=$1', [sub.endpoint, r.status]);
     }
   }));
   return ok;
 }
-/** Send one notification. 404/410 means the phone unsubscribed; caller deletes the row. */
-export async function sendOne(sub: Sub, payload: string): Promise<'ok' | 'gone' | 'err'> {
-  if (!vapid) return 'err';
+/** Send one notification. 404/410 means the phone unsubscribed; caller deletes the row. Other failures keep the row and record the status. */
+export async function sendOne(sub: Sub, payload: string): Promise<{ result: 'ok' | 'gone' | 'err'; status: number }> {
+  if (!vapid) return { result: 'err', status: 0 };
   try {
     const status = await postPush(sub.endpoint, encryptPush(sub.p256dh, sub.auth, payload), vapidJwt(new URL(sub.endpoint).origin, vapid.publicKey, vapid.privateKey));
-    if (status >= 200 && status < 300) return 'ok';
-    if (status === 404 || status === 410) return 'gone';
-    return 'err';
-  } catch { return 'err'; }
+    if (status >= 200 && status < 300) return { result: 'ok', status };
+    if (status === 404 || status === 410) return { result: 'gone', status };
+    return { result: 'err', status };
+  } catch { return { result: 'err', status: 0 }; }
 }

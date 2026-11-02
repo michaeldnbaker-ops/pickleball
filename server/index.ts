@@ -25,7 +25,9 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
   create table if not exists clubs(k text primary key, name text not null, hidden boolean not null default false, created_at timestamptz not null default now());
   create table if not exists push_subs(endpoint text primary key, p256dh text not null, auth text not null, test boolean not null default false, created_at timestamptz not null default now());
   create table if not exists push_vapid(id int primary key, public_key text not null, private_key text not null);
-  create table if not exists push_inbox(id text primary key, body bytea not null, headers text not null, created_at timestamptz not null default now());`).catch(e => { ready = null; throw e; });
+  create table if not exists push_inbox(id text primary key, body bytea not null, headers text not null, created_at timestamptz not null default now());
+  alter table push_subs add column if not exists last_status int;
+  alter table push_subs add column if not exists last_at timestamptz;`).catch(e => { ready = null; throw e; });
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
