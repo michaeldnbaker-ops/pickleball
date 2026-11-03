@@ -34,26 +34,28 @@ interface R { n: number; matches: M[]; playoff?: boolean }
 interface X { slot: string; from: number; name: string | null }
 interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; noStats?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
-async function syncStats(code: string, ev: Ev) {
-  await ensureStats();
-  if (ev.noStats) { await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); return; }
+/** Scored games for stats, trophies, and pickles. A past-game import is one round per match; playoffs are tagged so they stay out of trophies. */
+export function statRows(code: string, ev: Ev): unknown[][] {
   const name = new Map((ev.players || []).map(p => [p.id, (p.name || '').trim()]));
-  // Club vs Club: unnamed visitor spots play as guest players; they are kept out of Overall stats (excl).
-  const guestNames = new Set((ev.players || []).filter((p: { guest?: boolean }) => p.guest).map(p => (p.name || "").trim().toLowerCase()));
+  const guestNames = new Set((ev.players || []).filter((p: { guest?: boolean }) => p.guest).map(p => (p.name || '').trim().toLowerCase()));
   const rows: unknown[][] = []; let po = 0;
-  // Clubs: stats go to the game's club (missing = Stone Creek). Club vs Club: side A is the home club, side B the visiting club.
   const ca = clubOf(ev), cb = ev.format === 'club' && ev.club?.away?.trim() ? ev.club.away.trim() : (ev as { awayClub?: string }).awayClub?.trim() || ca;
   for (const r of [...(ev.rounds || []), ...(ev.plan || [])]) {
     const tag = r.playoff ? 'p' + (++po) : 'r' + r.n;
     for (const m of r.matches || []) {
       if (m.sa == null || m.sb == null || m.sa === m.sb) continue;
-      // Subs: from their round on, a slot's results are credited to the sub; an unnamed Guest is kept out of Overall stats (excl).
       const rn = r.playoff ? 10000 + r.n : r.n; const who = (id: string) => subName(ev.subs, id, rn) ?? (name.get(id) || '?');
       const an = m.a.map(who), bn = m.b.map(who);
       const excl = [...an, ...bn].filter(x => /^guest$/i.test(x.trim()) || guestNames.has(x.trim().toLowerCase())).map(x => x.toLowerCase());
       rows.push([`${code}:${tag}:${m.court}`, code, ev.name || '', ev.date || '', !!ev.hidden, an.map(x => x.toLowerCase()), bn.map(x => x.toLowerCase()), an, bn, m.sa, m.sb, excl, ca, cb]);
     }
   }
+  return rows;
+}
+async function syncStats(code: string, ev: Ev) {
+  await ensureStats();
+  if (ev.noStats) { await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); return; }
+  const rows = statRows(code, ev);
   const ids = rows.map(r => r[0] as string);
   await syncTrophies(code, ev, rows);
   await pool.query('delete from stat_matches where code=$1 and not (id = any($2::text[]))', [code, ids]);

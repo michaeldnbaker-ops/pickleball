@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('pg', () => ({ Pool: class { on() {} query() { return Promise.resolve({ rows: [] }); } } }));
 import { buildPast } from './past';
+import { statRows, trophyAwards } from './index';
 const m = (a: string[], b: string[], sa: number, sb: number, court?: number) => ({ a, b, sa, sb, court });
 const ok = { date: '2026-09-01', matches: [m(['Ann', 'Bob'], ['Cy', 'Di'], 11, 7, 2), m(['ann', 'Cy'], ['Bob', 'Ed'], 9, 11)] };
 describe('add past game (server)', () => {
@@ -23,6 +25,20 @@ describe('add past game (server)', () => {
 
 import { buildPast as bp2 } from './past';
 import { test as t2, expect as e2 } from 'vitest';
+t2('a past import posts gold and silver only for a trophy match, and a shutout still counts as a pickle', () => {
+  const matches = [
+    { a: ['Todd Burrall', 'Jeff Stempel'], b: ['Jack Melton', 'Owen Stempel'], sa: 11, sb: 0 },
+    { a: ['Todd Burrall', 'Jack Melton'], b: ['Jeff Stempel', 'Owen Stempel'], sa: 11, sb: 5 },
+  ];
+  const plain = buildPast({ date: '2026-09-01', name: 'Swish import', matches }, '2026-10-21', 'SWISH1', 'h', 1).ev!;
+  const trophy = buildPast({ date: '2026-09-01', name: 'Swish import', trophy: true, matches }, '2026-10-21', 'SWISH1', 'h', 1).ev!;
+  const rows = statRows('SWISH1', plain as never);
+  e2(rows.some(r => r[9] === 11 && r[10] === 0)).toBe(true);
+  e2(trophyAwards(plain as never, rows)).toEqual([]);
+  const awards = trophyAwards(trophy as never, statRows('SWISH1', trophy as never));
+  e2(awards.filter(a => a.place === 'gold').map(a => a.name)).toEqual(['Todd Burrall']);
+  e2(awards.filter(a => a.place === 'silver').map(a => a.name)).toEqual(['Jeff Stempel']);
+});
 t2('past game: optional visiting club is stored and must differ from home', () => {
   const ms = [{ a: ['A1', 'A2'], b: ['B1', 'B2'], sa: 15, sb: 5 }];
   e2(bp2({ date: '2026-01-02', club: 'Stone Creek', away: 'Crossgates', matches: ms }, '2026-10-26', 'X', 'h', 1).ev?.awayClub).toBe('Crossgates');
