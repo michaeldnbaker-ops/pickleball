@@ -472,6 +472,15 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
 }
 /** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
 export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
+/** Every scheduled round is played and scored. A playoff counts only once its final is scored. */
+export function roundsAllScored(ev: EventT) {
+  const full = (r: Round) => r.matches.length > 0 && r.matches.every(scored);
+  const regs = ev.rounds.filter(r => !r.playoff);
+  const pos = ev.rounds.filter(r => r.playoff);
+  const regularsDone = regs.length >= ev.totalRounds && regs.every(full);
+  const playoffsDone = pos.length === 0 || (pos.every(full) && pos[pos.length - 1].matches.length === 1);
+  return regularsDone && playoffsDone;
+}
 /** End: keep every played round (including fully scored play-ahead rounds), drop unplayed ones, mark complete. */
 export function endEvent(ev: EventT) {
   for (const r of ev.plan || []) { if (!r.matches.length || !r.matches.every(m => scored(m) && m.sa !== m.sb)) break; ev.rounds.push({ n: r.n, matches: r.matches, byes: r.byes }); }

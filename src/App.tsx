@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -378,6 +378,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   const [online, setOnline] = useState(true); const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>((S.takeTab(code) as Tab) || (joining || S.getMe(code) ? 'me' : 'courts'));
   const [stamp, setStamp] = useState<Date | null>(null); const [sharing, setSharing] = useState(false); const [watching, setWatching] = useState(false);
+  const [completeAsk, setCompleteAsk] = useState(false);
   const refresh = useCallback(async () => { setLoading(true); const r = await S.load(code); if (r.ev) setEv(r.ev); setOnline(r.online); setStamp(new Date()); setLoading(false); }, [code]);
   useEffect(() => { refresh(); const f = () => refresh(); addEventListener('online', f); return () => removeEventListener('online', f); }, [refresh]);
   usePullToRefresh(refresh);
@@ -405,11 +406,21 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <div className={'status ' + (online ? '' : 'off')}>{online ? (stamp ? 'Updated ' + stamp.toLocaleTimeString([], { timeStyle: 'short' }) + ' · pull down or tap refresh' : '') : 'Offline — changes saved on this phone, will upload when back online'}</div>
-    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} host={isHost(ev, code)} />}
+    {!ev.finished && isHost(ev, code) && <div className={'card completeGame' + (roundsAllScored(ev) ? ' ready' : '')} role="region" aria-label="Complete game">
+      <b>{roundsAllScored(ev) ? 'All scores are in' : 'Complete this game any time'}</b>
+      <p className="muted small">{roundsAllScored(ev) ? (ev.noStats ? 'Lock the standings. This game is not tracked, so it stays out of Overall stats.' : 'Lock the standings and post stats and pickles.') : 'Unscored games are left out. Tracked games post stats and pickles when you complete.'}</p>
+      <button className="big primary" onClick={() => setCompleteAsk(true)}>Complete game</button></div>}
+    {!ev.finished && !isHost(ev, code) && roundsAllScored(ev) && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> All scores are in. Only {hostName(ev)} (who started the game) can complete it.</div>}
+    {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} host={isHost(ev, code)} onComplete={() => setCompleteAsk(true)} />}
     {tab === 'me' && <Me ev={ev} code={code} nm={nm} act={act} />}
     {tab === 'schedule' && <Schedule ev={ev} nm={nm} act={act} />}
     {tab === 'standings' && <Standings ev={ev} />}
     {tab === 'manage' && <Manage ev={ev} code={code} act={act} />}
+    {completeAsk && <div className="sheetBg" onClick={() => setCompleteAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="done-t" onClick={e => e.stopPropagation()}>
+      <h2 id="done-t"><Icon n="flag" size={22} /> Complete this game?</h2>
+      <p>{roundsAllScored(ev) ? 'Every round is scored. The standings lock.' : 'The standings lock. Unscored games are left out.'} {ev.noStats ? 'This game is not tracked.' : 'Stats and pickles are posted.'}</p>
+      <button className="big primary" onClick={() => { setCompleteAsk(false); act(e => endEvent(e)); }}>Complete game</button>
+      <button className="big" onClick={() => setCompleteAsk(false)}>Keep playing</button></div></div>}
     <nav className="tabs">{(['courts', 'me', 'schedule', 'standings', 'manage'] as Tab[]).map(t => <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); scrollTo(0, 0); }}>{{ courts: <><Ball /> Courts</>, me: <><Icon n="user" size={22} /> Me</>, schedule: <><Icon n="list" size={22} /> Rounds</>, standings: <><Icon n="trophy" size={22} /> Standings</>, manage: <><Icon n="settings" size={22} /> Manage</> }[t]}</button>)}</nav>
   </div>;
 }
@@ -441,7 +452,7 @@ function allViews(ev: EventT): View[] {
   return v;
 }
 
-function Courts({ ev, act, me, host }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string; host: boolean }) {
+function Courts({ ev, act, me, host, onComplete }: { ev: EventT; act: Act; nm: (id: string) => string; me?: string; host: boolean; onComplete: () => void }) {
   const views = allViews(ev); const curIdx = ev.rounds.length - 1;
   const [sel, setSel] = useState(curIdx);
   const lastCur = useRef(curIdx);
@@ -482,7 +493,7 @@ function Courts({ ev, act, me, host }: { ev: EventT; act: Act; nm: (id: string) 
     {vi === curIdx && !ev.finished && lastReg && !host && <div className="card lastRound hostOnly"><b>That's the last round.</b><div className="muted small">Only {hostName(ev)} (who started the game) can end it or add rounds.</div>
       {canAdvance && <button className="big" onClick={() => missing.length ? setAsk(true) : advance()}>Start playoffs ›</button>}</div>}
     {vi === curIdx && !ev.finished && lastReg && host && <div className="card lastRound"><b>That's the last round.</b>
-      <button className="big primary" onClick={() => act(e => endEvent(e))}><Icon n="flag" /> End now</button>
+      <button className="big primary" onClick={onComplete}><Icon n="flag" /> End now</button>
       <div className="row addR"><button onClick={() => act(e => addRounds(e, 1))}>+1 round</button><button onClick={() => act(e => addRounds(e, 3))}>+3 rounds</button><button onClick={() => { const n = Number(prompt('How many more rounds?', '2')); if (n > 0) act(e => addRounds(e, n)); }}>Custom…</button></div>
       <button className="big" onClick={() => missing.length ? setAsk(true) : advance()}>Start playoffs ›</button></div>}
     {vi !== curIdx && <button className="big" onClick={() => setSel(curIdx)}>Back to current round</button>}

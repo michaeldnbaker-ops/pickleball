@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { trophyPodium, trophyWinners, pickleCounts, type EventT, type Player } from './engine';
+import { trophyPodium, trophyWinners, pickleCounts, roundsAllScored, type EventT, type Player } from './engine';
 
 const P = (id: string, name: string, guest = false): Player => ({ id, name, ...(guest ? { guest: true } : {}) });
 const base = (over: Partial<EventT> = {}): EventT => ({
@@ -38,5 +38,17 @@ describe('silver trophies and pickles', () => {
     expect(pickleCounts(e)).toEqual([]);
     const g = base(); g.players[2].guest = true;
     expect(pickleCounts(g).map(p => p.name)).toEqual(['Dan']);
+  });
+  it('all rounds are scored only after the schedule (and a playoff final) is in', () => {
+    const e = base({ finished: false, totalRounds: 2 });
+    expect(roundsAllScored(e)).toBe(false);
+    e.rounds.push({ n: 2, byes: [], matches: [{ court: 1, a: ['a', 'b'], b: ['c', 'd'], sa: 11, sb: 5 }] });
+    expect(roundsAllScored(e)).toBe(true);
+    e.rounds.push({ n: 3, playoff: true, byes: [], matches: [{ court: 1, a: ['a', 'b'], b: ['c', 'd'], sa: 11, sb: 7 }, { court: 2, a: ['a', 'c'], b: ['b', 'd'], sa: 11, sb: 3 }] });
+    expect(roundsAllScored(e)).toBe(false);
+    e.rounds.push({ n: 4, playoff: true, byes: [], matches: [{ court: 1, a: ['a', 'b'], b: ['c', 'd'] }] });
+    expect(roundsAllScored(e)).toBe(false);
+    e.rounds[3].matches[0].sa = 11; e.rounds[3].matches[0].sb = 8;
+    expect(roundsAllScored(e)).toBe(true);
   });
 });
