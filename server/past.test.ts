@@ -7,7 +7,7 @@ const ok = { date: '2026-09-01', matches: [m(['Ann', 'Bob'], ['Cy', 'Di'], 11, 7
 describe('add past game (server)', () => {
   it('builds a closed, added-later game; same name any case = one player', () => {
     const { ev } = buildPast(ok, '2026-10-21', 'ABC', 'h', 1);
-    expect(ev).toMatchObject({ finished: true, addedLater: true, date: '2026-09-01T12:00', clubName: 'Stone Creek', name: 'Past game', trophy: false, totalRounds: 2 });
+    expect(ev).toMatchObject({ finished: true, addedLater: true, date: '2026-09-01T12:00', clubName: 'Stone Creek', name: 'Past game', trophy: true, totalRounds: 2 });
     expect((ev!.players as unknown[]).length).toBe(5);
     expect((ev!.rounds as { matches: { court: number }[] }[]).map(r => r.matches[0].court)).toEqual([2, 1]);
   });
@@ -25,19 +25,18 @@ describe('add past game (server)', () => {
 
 import { buildPast as bp2 } from './past';
 import { test as t2, expect as e2 } from 'vitest';
-t2('a past import posts gold and silver only for a trophy match, and a shutout still counts as a pickle', () => {
+t2('a tracked past import posts gold and silver, a shutout is still a pickle, and an untracked game posts neither', () => {
   const matches = [
     { a: ['Todd Burrall', 'Jeff Stempel'], b: ['Jack Melton', 'Owen Stempel'], sa: 11, sb: 0 },
     { a: ['Todd Burrall', 'Jack Melton'], b: ['Jeff Stempel', 'Owen Stempel'], sa: 11, sb: 5 },
   ];
-  const plain = buildPast({ date: '2026-09-01', name: 'Swish import', matches }, '2026-10-21', 'SWISH1', 'h', 1).ev!;
-  const trophy = buildPast({ date: '2026-09-01', name: 'Swish import', trophy: true, matches }, '2026-10-21', 'SWISH1', 'h', 1).ev!;
-  const rows = statRows('SWISH1', plain as never);
+  const ev = buildPast({ date: '2026-09-01', name: 'Swish import', matches }, '2026-10-21', 'SWISH1', 'h', 1).ev!;
+  const rows = statRows('SWISH1', ev as never);
   e2(rows.some(r => r[9] === 11 && r[10] === 0)).toBe(true);
-  e2(trophyAwards(plain as never, rows)).toEqual([]);
-  const awards = trophyAwards(trophy as never, statRows('SWISH1', trophy as never));
+  const awards = trophyAwards(ev as never, rows);
   e2(awards.filter(a => a.place === 'gold').map(a => a.name)).toEqual(['Todd Burrall']);
   e2(awards.filter(a => a.place === 'silver').map(a => a.name)).toEqual(['Jeff Stempel']);
+  e2(trophyAwards({ ...(ev as object), noStats: true } as never, rows)).toEqual([]);
 });
 t2('past game: optional visiting club is stored and must differ from home', () => {
   const ms = [{ a: ['A1', 'A2'], b: ['B1', 'B2'], sa: 15, sb: 5 }];

@@ -75,18 +75,18 @@ export function trophyWinners(rows: unknown[][]) {
   if (rest.length) { const s = rest[0][1]; for (const [k, e] of rest) if (same(e, s)) out.push({ k, ...e, place: 'silver' as const }); }
   return out;
 }
-/** Trophies are written only for a finished Trophy match that is tracking stats. */
+/** Gold and silver are written for every finished game that is tracking stats. */
 export function trophyAwards(ev: { trophy?: boolean; finished?: boolean; noStats?: boolean }, rows: unknown[][]) {
-  if (ev.noStats || !ev.trophy || !ev.finished) return [];
+  if (ev.noStats || !ev.finished) return [];
   return trophyWinners(rows);
 }
-/** Existing gold is never replaced. Once a game has any gold row, only missing silver (for players who do not already have gold) is added. */
+/** Gold rows already stored are left as they are. Missing gold is added. Silver is whoever is 2nd and does not already have gold. */
 export function mergeAwards<T extends { k: string; place: 'gold' | 'silver' }>(existingGold: string[], awards: T[]): T[] {
-  if (existingGold.length) { const have = new Set(existingGold); return awards.filter(a => a.place === 'silver' && !have.has(a.k)); }
-  return awards;
+  const have = new Set(existingGold);
+  return awards.filter(a => !have.has(a.k));
 }
 async function syncTrophies(code: string, ev: Ev, rows: unknown[][]) {
-  if (ev.noStats || !ev.trophy || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
+  if (ev.noStats || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
   const gold = (await pool.query("select k from trophies where code=$1 and coalesce(place,'gold') <> 'silver'", [code])).rows.map(r => r.k as string);
   // 2nd place can move if a past game's scores are edited. Gold rows are not deleted or updated.
   await pool.query("delete from trophies where code=$1 and place = 'silver'", [code]);

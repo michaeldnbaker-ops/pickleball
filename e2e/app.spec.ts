@@ -1012,11 +1012,12 @@ test('Player icons: built-in icon or photo, first phone owns it, others refused,
   await ctx.close(); console.log('ICONCODE ' + code);
 });
 
-test('Trophy match: checkbox at Create; 1st place (wins, then diff; co-winners) gets a trophy on completion; badge + count in Overall + trophy list', async ({ page, request }) => {
+test('Tracked game: 1st place (wins, then diff; co-winners) gets gold on completion; badge + count in Overall + trophy list', async ({ page, request }) => {
   test.setTimeout(120000);
   page.on('dialog', d => d.accept());
   await page.goto(BASE); await page.getByText('Create a game').click(); await page.getByText('Next: Players').click(); await page.getByRole('button', { name: 'Next ›' }).click();
-  await expect(page.getByLabel(/Trophy match/)).not.toBeChecked();
+  await expect(page.getByLabel(/Trophy match/)).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'Track stats' })).toHaveAttribute('aria-checked', 'true');
   const tag = Math.random().toString(36).slice(2, 6).toLowerCase(); const code = 'TR' + tag.toUpperCase();
   const ps = ['Ann', 'Bob', 'Cat', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal'].map((n, i) => ({ id: 't' + i, name: n + ' ' + tag }));
   const lobby = { id: code, name: 'Trophy e2e ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 2, totalRounds: 1, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], rounds: [], createdAt: 1, hidden: true, trophy: true };
@@ -1123,7 +1124,7 @@ test('Clubs: pick/add club at Create (saved for everyone, case-insensitive), sta
   await page.screenshot({ path: 'e2e/shot-clubs-create.png', fullPage: true });
   await page.getByText('Next: Players').click();
   for (const n of ps) { await page.getByPlaceholder('Full name').fill(n); await page.getByText('Add new player').click(); }
-  await page.getByRole('button', { name: 'Next ›' }).click(); await page.getByLabel(/Trophy match/).check();
+  await page.getByRole('button', { name: 'Next ›' }).click();
   await page.getByRole('button', { name: 'Create game' }).click(); await expect(page.locator('.lobbyStatus')).toBeVisible(); const code = page.url().split('/e/')[1];
   expect((await (await request.get(API + '/e/' + code)).json()).data.clubName).toBe(C);
   // Join list tag (game not started yet)
@@ -1169,7 +1170,7 @@ test('Add past game: closed game with real date, "Added later" in Past, counts i
   expect(await page.locator('#past-date').getAttribute('max')).not.toBe(today);
   await page.locator('#past-date').fill('2026-09-15');
   await page.getByLabel('Name (optional)').fill('e2e past ' + t);
-  await page.getByLabel(/Trophy match/).check();
+  await expect(page.getByLabel(/Trophy match/)).toHaveCount(0);
   const fill = async (i: number, a: string[], b: string[], sa: string, sb: string) => {
     await page.getByLabel(`Match ${i} Team 1 player 1`).fill(a[0]); await page.getByLabel(`Match ${i} Team 1 player 2`).fill(a[1]);
     await page.getByLabel(`Match ${i} Team 2 player 1`).fill(b[0]); await page.getByLabel(`Match ${i} Team 2 player 2`).fill(b[1]);
@@ -1482,13 +1483,11 @@ test('Create offers Track stats or Just set up rounds (don\'t track); untracked 
   const skip = page.getByRole('radio', { name: "Just set up rounds (don't track)" });
   await expect(track).toHaveAttribute('aria-checked', 'true');
   await expect(skip).toHaveAttribute('aria-checked', 'false');
-  await expect(page.getByLabel(/Trophy match/)).toBeEnabled();
+  await expect(page.getByLabel(/Trophy match/)).toHaveCount(0);
   await skip.click();
   await expect(skip).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByLabel(/Trophy match/)).toBeDisabled();
   await page.screenshot({ path: 'e2e/shot-no-stats.png', fullPage: true });
   await track.click();
-  await expect(page.getByLabel(/Trophy match/)).toBeEnabled();
   const ps = ['Nia', 'Ned', 'Ora', 'Obe'].map((n, i) => ({ id: 'n' + i, name: n + ' ' + tag }));
   const shell = { name: 'Rounds only ' + tag, date: day2(), place: 'x', format: 'rotating', courts: 1, totalRounds: 1, balanceDupr: false, seeding: 'random', players: ps, active: ps.map(p => p.id), teams: [], createdAt: 1, hidden: true, trophy: true, finished: true, startedAt: 1, startedBy: 'organizer', host: 'organizer',
     rounds: [{ n: 1, byes: [], matches: [{ court: 1, a: ['n0', 'n1'], b: ['n2', 'n3'], sa: 11, sb: 0 }] }] };

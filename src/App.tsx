@@ -282,7 +282,7 @@ function NewEvent() {
   const [courtSet, setCourtSet] = useState<number[]>([1, 2, 3]); const courts = courtSet.length; const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [maxP, setMaxP] = useState(8); const [trophy, setTrophy] = useState(false); const [track, setTrack] = useState(true);
+  const [maxP, setMaxP] = useState(8); const [track, setTrack] = useState(true);
   const [homeClub, setHomeClub] = useState(S.SC); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
   const [clubNames, setClubNames] = useState<{ home: string[][]; away: string[][] }>({ home: [['', ''], ['', '']], away: [['', ''], ['', '']] });
   const isClub = format === 'club';
@@ -299,7 +299,7 @@ function NewEvent() {
     setBusy(true); localStorage.setItem('pb:lastPlace', place);
     players.forEach(S.addToRoster);
     const code = S.newCode();
-    const flags = { ...(track && trophy ? { trophy: true } : {}), ...(track ? {} : { noStats: true }), ...(S.testMode() ? { hidden: true } : {}) };
+    const flags = { ...(track ? { trophy: true } : { noStats: true }), ...(S.testMode() ? { hidden: true } : {}) };
     const ev: EventT = isClub
       ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), clubName: homeClub, club: newClub(homeClub.trim() || S.SC, awayClub.trim() || 'Visitors', nT), ...flags }
       : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.clubKey(homeClub) !== S.clubKey(S.SC) ? { clubName: homeClub } : {}), ...flags };
@@ -351,9 +351,8 @@ function NewEvent() {
         <div className="row"><button className={'chip ' + (seeding === 'random' ? 'on' : '')} onClick={() => setSeeding('random')}>Random</button><button className={'chip ' + (seeding === 'dupr' ? 'on' : '')} onClick={() => setSeeding('dupr')}>Seed by DUPR</button></div></>}
       {!isClub && <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>}
       <label id="track-l">Stats</label>
-      <div role="radiogroup" aria-labelledby="track-l">{([['Track stats', true], ['Just set up rounds (don\'t track)', false]] as const).map(([label, on]) => <button type="button" role="radio" aria-checked={track === on} key={label} className={'card tap fmt ' + (track === on ? 'sel' : '')} onClick={() => { setTrack(on); if (!on) setTrophy(false); }}><span className="radio" aria-hidden="true">{track === on ? '✓' : ''}</span><span className="fmtText"><b>{label}</b></span></button>)}</div>
-      <p className="muted small">{track ? 'Results count in Overall stats, the leaderboard, trophies, and pickles once the match ends.' : 'Matchups and rotations only. This game stays out of Overall stats, the leaderboard, trophies, and pickles.'}</p>
-      <label className="row check trophyCheck"><input type="checkbox" checked={trophy} disabled={!track} onChange={e => setTrophy(e.target.checked)} /> 🏆 Trophy match — 1st place wins gold, 2nd place wins silver</label>
+      <div role="radiogroup" aria-labelledby="track-l">{([['Track stats', true], ['Just set up rounds (don\'t track)', false]] as const).map(([label, on]) => <button type="button" role="radio" aria-checked={track === on} key={label} className={'card tap fmt ' + (track === on ? 'sel' : '')} onClick={() => setTrack(on)}><span className="radio" aria-hidden="true">{track === on ? '✓' : ''}</span><span className="fmtText"><b>{label}</b></span></button>)}</div>
+      <p className="muted small">{track ? 'Results count in Overall stats. 1st place wins gold and 2nd place wins silver, and pickles count, once the match ends.' : 'Matchups and rotations only. This game stays out of Overall stats, the leaderboard, trophies, and pickles.'}</p>
       <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy || (isClub && courts !== nT)} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
 }
@@ -619,7 +618,7 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
     {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> {tw.length > 1 ? 'Winners' : 'Winner'}: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
     {sw.length > 0 && <div className="card silverWin" role="status"><span aria-hidden="true">🥈</span> 2nd place: <b>{sw.map(t => t.name).join(' & ')}</b>{sw.length > 1 ? ' (tie)' : ''}</div>}
     <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.noStats ? <>{ev.finished ? 'Final standings' : 'Live'} · not counted in Overall stats, trophies, or pickles</> : ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
-    {ev.trophy && !ev.finished && !ev.noStats && <div className="card trophyNote"><span aria-hidden="true">🏆</span> Trophy match — 1st place wins gold, 2nd place wins silver when the game is completed</div>}
+    {!ev.noStats && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> 1st place wins gold, 2nd place wins silver when the game is completed</div>}
     {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
@@ -850,7 +849,7 @@ function Stats({ name }: { name?: string }) {
       {picker}
       <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="row" style={{ gap: '.35rem' }}><span className="trophyCount big">🏆 x{tro.filter(t => t.place !== 'silver').length}</span><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /></span></div>
         {tro.length ? <ul className="trophyList">{tro.map(t => <li key={t.code + (t.place || 'gold')} className="trophyItem"><span aria-hidden="true">{t.place === 'silver' ? '🥈' : '🏆'}</span><span className="trophyItemBody"><b>{t.ev_name}</b><span className="muted small">{t.place === 'silver' ? '2nd' : '1st'} · {fmtWhen(t.date).date} · {fmtWhen(t.date).day}</span></span></li>)}</ul>
-          : <p className="muted small">No trophies yet{club !== S.SC ? ' for ' + club : ''} — win a Trophy match to earn one.</p>}</div>
+          : <p className="muted small">No trophies yet{club !== S.SC ? ' for ' + club : ''} — finish a tracked game in 1st or 2nd.</p>}</div>
       {editIc && <IconEditor name={st?.name || name} onClose={() => setEditIc(false)} />}
       {st && <div className="statGrid">{([['Games', st.games], ['Wins', st.wins], ['Losses', st.losses], ['Win %', st.games ? Math.round(100 * st.wins / st.games) + '%' : '–'], ['Pts for', st.pf], ['Pts against', st.pa], ['+/-', (st.diff > 0 ? '+' : '') + st.diff], ['Events', st.events], ['Gold', st.trophies || 0], ['Silver', st.silver || 0], ['Pickles', st.pickles || 0]] as [string, string | number][]).map(([l, v]) => <div key={l} className="stat"><div className="sv">{v}</div><div className="sl">{l}</div></div>)}</div>}
       <h2>Match history</h2>{err && <p className="warn">Couldn't load stats (offline?).</p>}{!hist && !err && <p className="muted">Loading…</p>}
@@ -865,7 +864,7 @@ function Stats({ name }: { name?: string }) {
     {board?.length === 0 && <div className="card empty"><b>No scored games yet</b><p className="muted">Results are added when a match is completed.</p></div>}
     <div className="row statTabs" role="tablist">{(['players', 'trophies'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} className={'chip ' + (tab === t ? 'on' : '')} onClick={() => setTab(t)}>{t === 'players' ? 'Players' : '🏆 Trophies'}</button>)}</div>
     {board && tab === 'trophies' && (() => { const tb = board.filter(b => b.trophies || b.silver).sort((a, b) => (b.trophies || 0) - (a.trophies || 0) || (b.silver || 0) - (a.silver || 0) || b.wins - a.wins); return tb.length ? <LeaderList rows={tb} mode="trophies" />
-      : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Check “Trophy match” when creating a game; 1st place wins gold and 2nd place wins silver.</p></div>; })()}
+      : <div className="card empty"><b>No trophies yet{club !== S.SC ? ' for ' + club : ''}</b><p className="muted">Finish a tracked game. 1st place wins gold and 2nd place wins silver.</p></div>; })()}
     {board && board.length > 0 && tab === 'players' && <LeaderList rows={board} mode="players" />}
     {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
@@ -1049,11 +1048,11 @@ const ymd = (d: Date) => { const x = new Date(d); x.setMinutes(x.getMinutes() - 
 /** Add past game: date (past only), club, optional name + trophy, then matches one by one (2 v 2, optional court, scores). Saved closed. */
 function AddPast({ code }: { code?: string }) {
   const yday = ymd(new Date(Date.now() - 864e5));
-  const [date, setDate] = useState(''); const [club, setClub] = useState(S.clubView() || S.SC); const [name, setName] = useState(''); const [trophy, setTrophy] = useState(false);
+  const [date, setDate] = useState(''); const [club, setClub] = useState(S.clubView() || S.SC); const [name, setName] = useState('');
   const [ms, setMs] = useState<PM[]>([blankPM()]); const [names, setNames] = useState<string[]>([]); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [loaded, setLoaded] = useState(!code);
   useEffect(() => { S.statsBoard(club).then(b => setNames(b.map(x => x.name))).catch(() => {}); }, [club]);
   useEffect(() => { if (!code) return; S.fetchRemote(code).then(e => { if (!e || !e.addedLater) { setErr('Past game not found.'); return; } const nm = (id: string) => e.players.find(p => p.id === id)?.name || '';
-    setDate(e.date.slice(0, 10)); setClub(e.clubName || S.SC); setName(e.name === 'Past game' ? '' : e.name); setTrophy(!!e.trophy);
+    setDate(e.date.slice(0, 10)); setClub(e.clubName || S.SC); setName(e.name === 'Past game' ? '' : e.name);
     setMs(e.rounds.flatMap(r => r.matches).map(m => ({ a: [nm(m.a[0]), nm(m.a[1])], b: [nm(m.b[0]), nm(m.b[1])], court: m.court || 0, sa: String(m.sa ?? ''), sb: String(m.sb ?? '') }))); setLoaded(true); }).catch(() => setErr("Couldn't load (offline?).")); }, [code]);
   const used = [...new Set([...names, ...ms.flatMap(m => [...m.a, ...m.b]).map(x => x.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
   const upd = (i: number, f: (m: PM) => void) => setMs(xs => xs.map((m, j) => { if (j !== i) return m; const c = { ...m, a: [...m.a] as [string, string], b: [...m.b] as [string, string] }; f(c); return c; }));
@@ -1064,7 +1063,7 @@ function AddPast({ code }: { code?: string }) {
     const a = +m.sa, b = +m.sb; if (m.sa === '' || m.sb === '' || !Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0 || a > 99 || b > 99) return `Match ${i + 1}: enter both scores.`; if (a === b) return `Match ${i + 1}: scores can't tie.`; return ''; };
   const save = async () => { setErr('');
     if (!date || date > yday) return setErr('Pick a past date.'); for (let i = 0; i < ms.length; i++) { const p = problem(ms[i], i); if (p) return setErr(p); }
-    const g: S.PastGame = { date, club, name: name.trim(), trophy, matches: ms.map(m => ({ a: [canon(m.a[0]), canon(m.a[1])], b: [canon(m.b[0]), canon(m.b[1])], court: m.court || undefined, sa: +m.sa, sb: +m.sb })) };
+    const g: S.PastGame = { date, club, name: name.trim(), trophy: true, matches: ms.map(m => ({ a: [canon(m.a[0]), canon(m.a[1])], b: [canon(m.b[0]), canon(m.b[1])], court: m.court || undefined, sa: +m.sa, sb: +m.sb })) };
     setBusy(true); try { if (code) { await S.updatePast(code, g); S.setTab(code, 'standings'); go('e/' + code); } else { const c = await S.addPast(g); S.setTab(c, 'standings'); go('e/' + c); } } catch (e) { setErr("Couldn't save: " + (e as Error).message); } finally { setBusy(false); } };
   const pin = (i: number, side: 'a' | 'b', k: 0 | 1, label: string) => <input aria-label={`Match ${i + 1} ${label}`} list="pastNames" placeholder="Player name" maxLength={40} autoComplete="off" value={ms[i][side][k]} onChange={e => upd(i, m => { m[side][k] = e.target.value; })} onBlur={e => upd(i, m => { m[side][k] = canon(e.target.value); })} />;
   if (!loaded) return <div className="page"><Header title="Edit past game" back="past" />{err ? <p className="warn">{err}</p> : <p className="muted">Loading…</p>}</div>;
@@ -1073,7 +1072,7 @@ function AddPast({ code }: { code?: string }) {
     <label htmlFor="past-date">Date played</label><input id="past-date" type="date" max={yday} value={date} onChange={e => setDate(e.target.value)} />
     <ClubSelect id="addpast-club" label="Club" value={club} onChange={setClub} allowAdd />
     <label htmlFor="past-name">Name (optional)</label><input id="past-name" maxLength={60} placeholder="e.g. Friday open play" value={name} onChange={e => setName(e.target.value)} />
-    <label className="row check"><input type="checkbox" checked={trophy} onChange={e => setTrophy(e.target.checked)} /> Trophy match (1st place wins gold, 2nd place wins silver)</label>
+    <p className="muted small">1st place wins gold and 2nd place wins silver. A shutout still counts as a pickle.</p>
     <datalist id="pastNames">{used.map(n => <option key={n} value={n} />)}</datalist>
     {ms.map((m, i) => <div key={i} className="card pastMatch"><div className="row between"><b>Match {i + 1}</b>{ms.length > 1 && <button className="ghost danger small" aria-label={`Remove match ${i + 1}`} onClick={() => setMs(xs => xs.filter((_, j) => j !== i))}>✕</button>}</div>
       <div className="pmTeams"><div><div className="muted small">Team 1</div>{pin(i, 'a', 0, 'Team 1 player 1')}{pin(i, 'a', 1, 'Team 1 player 2')}<input aria-label={`Match ${i + 1} Team 1 score`} inputMode="numeric" placeholder="Score" value={m.sa} onChange={e => upd(i, x => { x.sa = e.target.value.replace(/\D/g, '').slice(0, 2); })} /></div>

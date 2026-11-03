@@ -34,6 +34,6 @@ export function buildPast(inp: PastIn, today: string, code: string, ownerHash: s
   if (players.length > PAST_MAX_PLAYERS) return { error: `at most ${PAST_MAX_PLAYERS} players` };
   const name = clean(inp.name, 60) || 'Past game';
   return { ev: { id: code, name, date: date + 'T12:00', place: '', format: 'rotating', courts: 4, totalRounds: rounds.length, balanceDupr: false, seeding: 'random',
-    players, active: players.map(p => p.id), teams: [], rounds, clubName: club, ...(away ? { awayClub: away } : {}), trophy: inp.trophy === true, finished: true, addedLater: true, ownerHash,
+    players, active: players.map(p => p.id), teams: [], rounds, clubName: club, ...(away ? { awayClub: away } : {}), trophy: true, finished: true, addedLater: true, ownerHash,
     createdAt, startedAt: createdAt, startedBy: 'organizer', host: 'organizer', hidden: inp.hidden === true } };
 }
