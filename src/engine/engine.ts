@@ -481,9 +481,13 @@ export function roundsAllScored(ev: EventT) {
   const playoffsDone = pos.length === 0 || (pos.every(full) && pos[pos.length - 1].matches.length === 1);
   return regularsDone && playoffsDone;
 }
-/** End: keep every played round (including fully scored play-ahead rounds), drop unplayed ones, mark complete. */
+/** End: keep every scored match, including a later round played after a skip. A blank court is left out and is never stored as 0–0. */
 export function endEvent(ev: EventT) {
-  for (const r of ev.plan || []) { if (!r.matches.length || !r.matches.every(m => scored(m) && m.sa !== m.sb)) break; ev.rounds.push({ n: r.n, matches: r.matches, byes: r.byes }); }
+  for (const r of ev.plan || []) {
+    const matches = r.matches.filter(scored);
+    if (!matches.length) continue;
+    ev.rounds.push({ n: r.n, matches, byes: r.byes, ...(r.playoff ? { playoff: true } : {}) });
+  }
   ev.finished = true; delete ev.plan; delete ev.planKey;
 }
 
