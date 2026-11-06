@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { closeEvent } from './close';
+import { closeEvent, liveUntil } from './close';
 import { capOf, overCap, validCourtSet, capChange } from './cap';
 import { buildPast } from './past';
 import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
@@ -126,10 +126,10 @@ function ctLocal(ms: number) {
 async function purgeStale() {
   const today = ctLocal(Date.now()).slice(0, 10);
   await pool.query(`delete from events where jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))=0 and coalesce(data->>'date','') ~ '^\\d{4}-\\d{2}-\\d{2}' and substr(data->>'date',1,10) < $1`, [today]).catch(() => {});
-  // Auto-close: a game that started but was never ended is completed the day after its date, exactly like End early. Small batches keep requests fast.
+  // Auto-close: a started game still open 24 hours after its scheduled start is completed, exactly like End early. A game from last evening stays open past midnight. Small batches keep requests fast.
   try {
     const { rows } = await pool.query(`select code, data, version from events where jsonb_array_length(coalesce(data->'rounds','[]'::jsonb))>0 and coalesce((data->>'finished')::boolean,false)=false
-      and coalesce(data->>'date','') ~ '^\\d{4}-\\d{2}-\\d{2}' and substr(data->>'date',1,10) < $1 order by data->>'date' limit 25`, [today]);
+      and coalesce(data->>'date','') ~ '^\\d{4}-\\d{2}-\\d{2}' and data->>'date' < $1 order by data->>'date' limit 25`, [liveUntil()]);
     for (const r of rows) {
       const ev = closeEvent(r.data as Ev);
       const u = await pool.query("update events set data=$2, version=version+1, updated_at=now() where code=$1 and version=$3 and coalesce((data->>'finished')::boolean,false)=false", [r.code, JSON.stringify(ev), r.version]);
@@ -146,14 +146,15 @@ export default {
       if (url.pathname === '/events' && req.method === 'GET') {
         // Public list: not-yet-started (lobby/upcoming), unfinished, unhidden events dated from (client-local "from", default now - 1 day) forward, soonest first.
         await purgeStale();
-        // Join shows only games whose start time is less than 3 hours ago (Central time) or later.
+        // Not-yet-started games: only if the start is less than 3 hours ago. A game already in progress stays listed for 24 hours after its scheduled start, so players can find it the next morning.
         const from = ctLocal(Date.now() - 3 * 3600e3);
         const { rows } = await pool.query(`select code, data->>'name' as name, data->>'date' as date, data->>'place' as place, data->>'format' as format,
             coalesce(jsonb_array_length(data->'active'),0) as players, jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) as rounds,
             case when data->>'maxPlayers' in ('4','8','12','16') then (data->>'maxPlayers')::int end as max,
             coalesce(case when data->>'format'='club' then data->'club'->>'home' end, data->>'clubName', 'Stone Creek') as club
           from events where coalesce((data->>'finished')::boolean,false)=false and (coalesce((data->>'hidden')::boolean,false)=false or $2)
-            and data->>'date' >= $1 order by data->>'date' asc limit $3`, [from, test, test ? 300 : 50]); // test mode sees more (hidden e2e games pile up)
+            and (data->>'date' >= $1 or (jsonb_array_length(coalesce(data->'rounds','[]'::jsonb)) > 0 and data->>'date' >= $4))
+            order by data->>'date' asc limit $3`, [from, test, test ? 300 : 50, liveUntil()]); // test mode sees more (hidden e2e games pile up)
         return j({ events: rows });
       }
       if (url.pathname === '/past' && req.method === 'GET') {
