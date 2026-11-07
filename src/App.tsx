@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -344,7 +344,7 @@ function NewEvent() {
       {!isClub && <p className="muted small">Join closes once {maxP} players have signed up; if someone drops out, the spot opens again.</p>}
       <CourtPicker value={courtSet} onChange={setCourtSet} />
       {isClub ? <p className={'muted small clubCourtsNeed' + (courts !== nT ? ' warn' : '')} role="status">Pick exactly {nT} court{nT === 1 ? '' : 's'} — one per home team (picked {courts}). Home team 1 plays on the first court, team 2 on the next, and so on. Visiting teams move one court each round.</p>
-      : <p className="muted small">Games start with exactly 4, 8, 12 or 16 players. Courts fill 4 at a time; if there are more players than courts, the extras sit out in fair rotation. Partners don't repeat until they have to.</p>}
+      : <p className="muted small">The max (4, 8, 12, or 16) is only a cap. A game can start with 4 or more players. Courts fill 4 at a time; anyone extra sits out and rotates. Partners don't repeat until they have to.</p>}
       <label>Number of rounds</label><Stepper value={rounds} min={1} max={40} onChange={setRounds} />
       {isClub && <p className="muted small">{nT} round{nT === 1 ? '' : 's'} = every home team plays every visiting team once.</p>}
       {(format === 'kotc' || format === 'ladder' || unit > 1) && <><label>Starting order / teams</label>
@@ -665,7 +665,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   const openStart = () => { setPickC(courtList(ev)); setAsk(true); };
   const start = () => { const cs = pickC.length ? pickC : courtList(ev); setAsk(false); if (starting) return; setStarting(true); const stamp = Date.now();
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
-    act(e => { if (e.rounds.length || !(e.club ? clubReady(e.club) && cs.length === e.club.n : startOk(e.active.length))) return; e.courts = cs.length; e.courtSet = cs; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
+    act(e => { if (e.rounds.length || !(e.club ? clubReady(e.club) && cs.length === e.club.n : startOk(e.active.length, e.format))) return; e.courts = cs.length; e.courtSet = cs; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
   const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer((S.localEvent(code) || ev).players.find(x => x.id === id)); };
   // This phone forgets a name that was removed (by the creator) or dropped elsewhere, so it can join again.
@@ -673,7 +673,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
   const joined = ev.players.filter(p => ev.active.includes(p.id));
   const cap = capOf(ev); const full = isFull(ev);
   const club = ev.format === 'club' && ev.club ? ev.club : null;
-  const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me)); const ok = club ? clubReady(club) : startOk(joined.length);
+  const canStart = S.isOrg(code) || (!!me && ev.players.some(p => p.id === me)); const ok = club ? clubReady(club) : startOk(joined.length, ev.format);
   const courtsOk = !club || pickC.length === club.n;
   const org = S.isOrg(code);
   const drop = (id: string, name: string, self: boolean) => { if (!confirm(self ? 'Drop out of this game?' : 'Remove ' + name + ' from this game?')) return;
@@ -698,7 +698,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
         onClick={() => cap !== c && act(e => { if (!e.rounds.length && c >= new Set(e.active).size) e.maxPlayers = c; })}>{c}</button>)}</div>
       {!cap && <div className="muted small">No limit set</div>}</div>}
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && openStart()}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
-    {canStart && !ok && <p className="startNeed" role="status">{club ? 'Fill every home team spot to start (empty visitor spots play as guests)' : `Need 4, 8, 12 or 16 players to start (have ${joined.length})`}</p>}
+    {canStart && !ok && <p className="startNeed" role="status">{club ? 'Fill every home team spot to start (empty visitor spots play as guests)' : startBlock(joined.length, ev.format)}</p>}
     {club && <ClubTeams ev={ev} act={act} edit={org} me={me} />}
     {!me && full && <FullCard ev={ev} onPick={pick} />}
     {!me && !full && <JoinForm ev={ev} onJoin={(p, fromMemory) => { const done = act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }); return done.then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) { pick(p.id); return; } const same = fromMemory ? cur?.players.find(x => cur.active.includes(x.id) && normName(x.name) === normName(p.name)) : undefined; if (same) { pick(same.id); return; } if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}

@@ -451,10 +451,11 @@ export function addActivePlayer(ev: EventT, p: Player, rng: Rng = Math.random) {
   return true;
 }
 
-/** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. */
+/** Start a lobby event with whoever has joined: form fixed pairs / teams of 4 (snake draft), draw Round 1 and pre-draw the rest. Fewer than 4 (or 8 for Team Battle) does not start. */
 export function startEvent(ev: EventT, rng: Rng = Math.random) {
   if (ev.rounds.length) return;
   if (ev.format === 'club' && ev.club) { fillClub(ev); const ids = clubIds(ev.club); ev.active = ids; ev.teams = [...ev.club.homeTeams, ...ev.club.awayTeams].map(t => t.slice()); ev.courts = ev.club.n; }
+  if (!startOk(ev.active.length, ev.format)) return;
   const unit = unitSize(ev.format);
   if (unit > 1) {
     // keep the organizer's preset pairs/teams (complete, all still in), auto-form the rest
@@ -469,6 +470,15 @@ export function startEvent(ev: EventT, rng: Rng = Math.random) {
   // One fresh random schedule for this game. The random source is the caller's; the app passes Math.random.
   const all = searchSchedule(ev, Math.max(1, ev.totalRounds), rng);
   ev.rounds.push(all[0]); ev.plan = all.slice(1).map((r, i) => ({ ...r, n: i + 2 })); ev.planKey = planKeyOf(ev);
+}
+/** Round 1 is already set. Draw the rest of totalRounds from that history, without redrawing the played round. */
+export function fillRemaining(ev: EventT, rng: Rng = Math.random) {
+  const have = ev.rounds.filter(r => !r.playoff).length;
+  const need = Math.max(0, ev.totalRounds - have);
+  if (!need) { delete ev.plan; delete ev.planKey; return; }
+  const rest = searchSchedule(ev, need, rng);
+  ev.plan = rest.map((r, i) => ({ ...r, n: have + i + 1 }));
+  ev.planKey = planKeyOf(ev);
 }
 /** Extend the event by n rounds (from the last round) — new rounds are pre-drawn. */
 export function addRounds(ev: EventT, n: number, rng: Rng = Math.random) { ev.totalRounds += Math.max(1, Math.floor(n)); ev.finished = false; ensurePlan(ev, rng); }
@@ -491,8 +501,13 @@ export function endEvent(ev: EventT) {
   ev.finished = true; delete ev.plan; delete ev.planKey;
 }
 
-/** A game can start only with exactly 4, 8, 12 or 16 players. */
-export const startOk = (n: number) => n === 4 || n === 8 || n === 12 || n === 16;
+/** Cap is a maximum. Doubles can start with any roster of at least 4. Team Battle needs two full teams of 4. */
+export function startBlock(n: number, format: Format = 'rotating'): string | null {
+  if (format === 'team' && n < 8) return `Team Battle needs at least 8 players, in groups of 4 (have ${n}).`;
+  if (n < 4) return `Need at least 4 players to start a doubles game (have ${n}).`;
+  return null;
+}
+export const startOk = (n: number, format: Format = 'rotating') => startBlock(n, format) === null;
 
 // ---- Club vs Club ----
 /** Round n: home team i (court slot i+1) plays visiting team (i + n - 1) mod N. Pairings never depend on results. */

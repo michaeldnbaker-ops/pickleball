@@ -369,13 +369,14 @@ export default {
           // Before the start: no two players with the same name (trimmed, case-insensitive). Existing duplicates are left alone so they can be removed.
           return j({ error: 'duplicate name', data: cur }, 409);
         } else if (body.data && (body.data.rounds || []).length > 0) {
-          // Starting: exactly 4, 8, 12 or 16 players.
+          // Starting: at least 4 players (8 for Team Battle). The 4/8/12/16 setting is a cap, not a minimum.
           const n = new Set(body.data.active || []).size;
           if (body.data.format === 'club') {
             // Club vs Club: exactly N home + N visiting teams of 2 (empty visitor spots become guests at the start).
             const c = body.data.club; const N = c?.n;
             if (!Number.isInteger(N) || N < 1 || N > 8 || n !== 4 * N || body.data.courts !== N || (c.homeTeams || []).length !== N || (c.awayTeams || []).length !== N) return j({ error: 'club teams incomplete', players: n, data: cur }, 409);
-          } else if (![4, 8, 12, 16].includes(n)) return j({ error: 'need 4, 8, 12 or 16 players', players: n, data: cur }, 409);
+          } else if (body.data.format === 'team' && n < 8) return j({ error: 'need at least 8 players', players: n, data: cur }, 409);
+          else if (n < 4) return j({ error: 'need at least 4 players', players: n, data: cur }, 409);
           if (overCap(cur, body.data)) return j({ error: 'full', max: capOf(cur ?? body.data), data: cur }, 409);
           // The starter must be someone in the game (a removed player's phone can't start as a ghost); otherwise the creator's phone ('organizer').
           const pids = new Set((body.data.players || []).map((p: { id: string }) => p.id));

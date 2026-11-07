@@ -222,11 +222,35 @@ describe('drop player & play-ahead lock', () => {
   });
 });
 
-import { startEvent, addRounds, endEvent, addActivePlayer, trophyWinners } from './engine';
+import { startEvent, addRounds, endEvent, addActivePlayer, trophyWinners, fillRemaining } from './engine';
 describe('lobby start, any player count, extend/end', () => {
   const mk = (n: number, format: Format = 'rotating', courts = 3, totalRounds = 6): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts, totalRounds, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
   it('lobby has no rounds or plan until started', () => { const ev = mk(10); expect(ensurePlan(ev)).toBe(false); expect(ev.plan).toBeUndefined(); });
-  it.each([1, 3, 4, 5, 7, 10, 13, 17])('%i players: starts, fills courts 4 at a time, byes rotate evenly', n => {
+  it.each([1, 2, 3])('%i players: does not start a doubles game', n => { const ev = mk(n); startEvent(ev, mulberry(n)); expect(ev.rounds).toHaveLength(0); });
+  it('six players, four courts, seven rounds: one court, two sit, seeded round 1 is kept', () => {
+    const ev = mk(6, 'rotating', 4, 7); ev.courtSet = [1, 2, 3, 4];
+    ev.rounds = [{ n: 1, matches: [{ court: 1, a: ['p0', 'p1'], b: ['p2', 'p3'] }], byes: ['p4', 'p5'] }];
+    fillRemaining(ev, mulberry(7));
+    const all = [...ev.rounds, ...ev.plan!];
+    expect(all).toHaveLength(7);
+    expect(all[0].matches[0].a).toEqual(['p0', 'p1']); expect(all[0].matches[0].b).toEqual(['p2', 'p3']); expect(all[0].byes).toEqual(['p4', 'p5']);
+    expect(all[0].matches[0].sa).toBeUndefined();
+    const bye = new Map<string, number>();
+    for (const r of all) {
+      expect(r.matches).toHaveLength(1); expect(r.byes).toHaveLength(2);
+      const ids = [...r.matches[0].a, ...r.matches[0].b, ...r.byes];
+      expect(new Set(ids).size).toBe(6); expect(ids.every(id => ev.active.includes(id))).toBe(true);
+      r.byes.forEach(b => bye.set(b, (bye.get(b) || 0) + 1));
+    }
+    const counts = ev.active.map(p => bye.get(p) || 0);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    const frozen = JSON.stringify(all[0]); ensurePlan(ev, mulberry(9));
+    expect(JSON.stringify(ev.rounds[0])).toBe(frozen); expect(ev.plan).toHaveLength(6);
+  });
+  it('team battle with six players does not start and keeps everyone', () => {
+    const ev = mk(6, 'team', 2, 7); startEvent(ev, mulberry(1)); expect(ev.rounds).toHaveLength(0); expect(ev.active).toHaveLength(6);
+  });
+  it.each([4, 5, 6, 7, 9, 10, 11, 13, 15, 17])('%i players: starts, fills courts 4 at a time, byes rotate evenly', n => {
     const ev = mk(n); startEvent(ev, mulberry(n));
     const all = [ev.rounds[0], ...ev.plan!]; expect(all.length).toBe(6);
     const playing = Math.min(3, Math.floor(n / 4)) * 4;
@@ -313,4 +337,10 @@ describe('scores are taken exactly as typed (no target / win-by-2)', () => {
   });
 });
 
-describe('start rule', () => { it('needs exactly 4, 8, 12 or 16 players', () => { for (const n of [4, 8, 12, 16]) expect(startOk(n)).toBe(true); for (const n of [0, 1, 3, 5, 7, 9, 10, 11, 13, 15, 17, 20]) expect(startOk(n)).toBe(false); }); });
+describe('start rule', () => {
+  it('the cap is not a minimum: 4 or more can start, fewer than 4 cannot, teams need 8', () => {
+    for (const n of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16]) expect(startOk(n)).toBe(true);
+    for (const n of [0, 1, 2, 3]) expect(startOk(n)).toBe(false);
+    expect(startOk(6, 'team')).toBe(false); expect(startOk(8, 'team')).toBe(true);
+  });
+});
