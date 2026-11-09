@@ -151,8 +151,9 @@ test('Swish-style round pages: strip, arrows, swipe, preview, me highlight, me m
   expect(await page.locator('.match .names').allTextContents()).toEqual(preview);
   // Me view: round-by-round mini cards incl. upcoming
   await page.getByRole('button', { name: 'Me', exact: true }).click();
-  await expect(page.locator('.compact').first()).toBeVisible();
-  expect(await page.locator('.compact').count()).toBe(6);
+  await expect(page.locator('.fullRound').first()).toBeVisible();
+  expect(await page.locator('.fullRound').count()).toBe(6);
+  await expect(page.locator('.fullRound').nth(1)).toContainText('Court');
   await page.screenshot({ path: 'e2e/shot-me.png', fullPage: true });
 });
 

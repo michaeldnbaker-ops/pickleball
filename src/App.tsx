@@ -484,9 +484,10 @@ function Courts({ ev, act, me, host, onComplete }: { ev: EventT; act: Act; nm: (
     {vi === curIdx && ev.finished && !champion && <div className="card champ"><Icon n="flag" /> Event finished — see Standings</div>}
     {ev.finished && <div className="lockNote readOnly" role="note"><Icon n="lock" size={18} /> Match complete · scores are final (read-only)</div>}
     {v.kind === 'tbd' ? <div className="card tbd">Pairings for Round {v.n} are drawn when it starts — {fmtName(ev.format)} moves players by results.</div> : <>
-      {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.</p>}
-      {v.r.matches.map((m, i) => <Fragment key={vi + '-' + i}>{ev.club && <div className="clubMatchup">{clubMatchup(ev, m)}</div>}<CourtCard m={m} nm={vnm} me={me} pickles={!ev.noStats} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} /></Fragment>)}
-      {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(vnm).join(' · ')}</div></div>}</>}
+      {v.kind === 'plan' && !isLocked(v.r) && <p className="muted small">{v.r.matches.length > 1 ? 'Enter a score on a court to lock this round.' : 'Pairings already drawn — courts can play ahead: enter a score and this round locks. Unscored previews redraw only if players or courts change.'}</p>}
+      {v.r.matches.map((m, i) => <Fragment key={vi + '-' + i}>{ev.club && <div className="clubMatchup">{clubMatchup(ev, m)}</div>}<CourtCard m={m} tight={v.r.matches.length > 1} nm={vnm} me={me} pickles={!ev.noStats} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : v.kind === 'played' ? (a, b) => act(e => { const mm = e.rounds[v.idx].matches[i]; mm.sa = a; mm.sb = b; }) : (a, b) => act(e => { ensurePlan(e); const pr = e.plan?.[vi - e.rounds.length]; if (pr && pr.matches[i]) { pr.matches[i].sa = a; pr.matches[i].sb = b; } })} /></Fragment>)}
+      {v.r.byes.length > 0 && <div className={'card bye' + (me && v.r.byes.includes(me) ? ' mine' : '')}><div className="courtHead"><span>Sitting out</span>{me && v.r.byes.includes(me) && <span className="tag">You</span>}</div><div className="byeNames">{v.r.byes.map(vnm).join(' · ')}</div></div>}
+      {unlisted(ev, v.r).length > 0 && <div className="card bye"><div className="courtHead"><span>Not on a court</span></div><div className="byeNames">{unlisted(ev, v.r).map(vnm).join(' · ')}</div></div>}</>}
     {vi === curIdx && !ev.finished && !(lastReg) && canAdvance && <button className={'big next ' + (done ? 'primary' : '')} onClick={() => missing.length ? setAsk(true) : advance()}>{nextLabel}</button>}
     {vi === curIdx && !ev.finished && !canAdvance && !lastReg && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> Only {hostName(ev)} (who started the game) can finish it.</div>}
     {vi === curIdx && !ev.finished && lastReg && !host && <div className="card lastRound hostOnly"><b>That's the last round.</b><div className="muted small">Only {hostName(ev)} (who started the game) can end it or add rounds.</div>
@@ -504,7 +505,7 @@ function Courts({ ev, act, me, host, onComplete }: { ev: EventT; act: Act; nm: (
   </div>;
 }
 
-function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName, pickles = true }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; onName?: (id: string) => void; cn?: (n: number) => string; pickles?: boolean }) {
+function CourtCard({ m, nm, onScore, me, label, compact, tight, onName, cn = courtName, pickles = true }: { m: Match; nm: (id: string) => string; onScore?: (a: number, b: number) => void; me?: string; label?: string; compact?: boolean; tight?: boolean; onName?: (id: string) => void; cn?: (n: number) => string; pickles?: boolean }) {
   const [a, setA] = useState<number | ''>(m.sa ?? ''); const [b, setB] = useState<number | ''>(m.sb ?? '');
   useEffect(() => { setA(m.sa ?? ''); setB(m.sb ?? ''); }, [m.sa, m.sb]);
   const [edit, setEdit] = useState(false);
@@ -516,11 +517,12 @@ function CourtCard({ m, nm, onScore, me, label, compact, onName, cn = courtName,
     <div className="names" aria-label={'Team ' + tag}>{t.map(p => onName ? <div key={p}><button className={'nameBtn' + (p === me ? ' meName' : '')} aria-label={'Player ' + nm(p) + ' options'} onClick={() => onName(p)}><Avatar name={nm(p)} size={22} /> {nm(p)}</button></div> : <div key={p} className={p === me ? 'meName' : ''}><Avatar name={nm(p)} size={22} /> {nm(p)}</div>)}</div>
     {entering ? <ScoreBox v={v} set={set} label={'Team ' + tag + ' score'} last={tag === 'B'} onDone={() => { if (a !== '' && b !== '' && a !== b && onScore) { onScore(Number(a), Number(b)); setEdit(false); } }} /> : <div className="pts" aria-label={'Team ' + tag + ' points'}>{pts ?? '–'}{pickled(pts, opp) && <span className="pickleBadge" aria-label="pickle">🥒</span>}</div>}
   </div>;
-  return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '')}>
-    <div className="courtHead"><span className="court">{label ?? 'Court ' + cn(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}</div>
+  return <div className={'card match' + (mine ? ' mine' : '') + (compact ? ' compact' : '') + (tight ? ' tight' : '')}>
+    <div className="courtHead"><span className="court">{label ?? 'Court ' + cn(m.court)}</span>{mine && <span className="tag">You &amp; partner</span>}{has && !entering && <span className="final">Final</span>}{tight && onScore && entering && <button className="primary tightSave" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>}</div>
     {side(m.a, a, setA, m.sa, m.sb, winA, 'A')}<div className="vsLine"><span>VS</span></div>{side(m.b, b, setB, m.sb, m.sa, has && !winA, 'B')}
-    {onScore && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
+    {onScore && !tight && (entering ? <button className="primary full" disabled={a === '' || b === '' || a === b} onClick={() => { onScore(Number(a), Number(b)); setEdit(false); }}>Save score</button>
       : <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>)}
+    {onScore && tight && !entering && <button className="ghost small editBtn" onClick={() => setEdit(true)}>Edit score</button>}
   </div>;
 }
 /** Typed-only score: number pad, starts empty ('–'), any whole number 0–99. Two digits (or Next) jumps to the other team's box. */
@@ -550,17 +552,36 @@ function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => st
       <div>Partner: <b>{partner(cur.m).map(id => slotName(ev, id, subRound(cur.r))).join(', ') || '—'}</b></div>
       <div>vs <b>{opps(cur.m).map(id => slotName(ev, id, subRound(cur.r))).join(' & ')}</b></div></> : cur?.bye ? <b>You're sitting out this round</b> : <b>Not in the current round</b>}</div>
     {s && <div className="card"><b>#{rank + 1}</b> · {s.w}W–{s.l}L · diff {s.diff > 0 ? '+' : ''}{s.diff} · {s.pf} pts</div>}
-    <h2>Your games</h2>
-    {mine.map(({ i, r, m, bye }) => m ? <CourtCard key={i} compact m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, subRound(r))} me={me} label={roundLabel(ev, i) + ' · Court ' + courtLabel(ev, m.court)} /> : bye ? <div key={i} className="card bye compact"><div className="courtHead"><span className="court">{roundLabel(ev, i)}</span></div>Sitting out</div> : null)}
-    {(ev.plan || []).map((r, k) => { const m = r.matches.find(m => m.a.includes(me) || m.b.includes(me)); const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return m ? <CourtCard key={'p' + k} compact m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, n)} me={me} label={'Round ' + n + ' · Court ' + courtLabel(ev, m.court) + ' · upcoming'} /> : <div key={'p' + k} className="card bye compact"><div className="courtHead"><span className="court">Round {n} · upcoming</span></div>Sitting out</div>; })}
+    <h2>Every round</h2>
+    {ev.rounds.map((r, i) => <FullRound key={i} ev={ev} me={me} label={roundLabel(ev, i)} r={r} nm={id => slotName(ev, id, subRound(r))} />)}
+    {(ev.plan || []).map((r, k) => { const n = ev.rounds.filter(x => !x.playoff).length + k + 1; return <FullRound key={'p' + k} ev={ev} me={me} label={'Round ' + n + ' · upcoming'} r={r} nm={id => slotName(ev, id, n)} />; })}
     <h2>Standings</h2><Standings ev={ev} me={me} />
   </div>;
 }
 
+function namesIn(r: Round) { return new Set([...r.byes, ...r.matches.flatMap(m => [...m.a, ...m.b])]); }
+function unlisted(ev: EventT, r: Round) { const seen = namesIn(r); return ev.active.filter(id => !seen.has(id) && ev.players.some(p => p.id === id)); }
+function FullRound({ ev, me, label, r, nm }: { ev: EventT; me?: string; label: string; r: Round; nm: (id: string) => string }) {
+  const line = (ids: string[]) => ids.map(nm).join(' & ');
+  const left = unlisted(ev, r);
+  return <div className="card fullRound">
+    <div className="tightHead"><span className="court">{label}</span></div>
+    {r.matches.map((m, i) => { const mine = !!me && (m.a.includes(me) || m.b.includes(me)); return <div key={i} className={'fullCourt' + (mine ? ' mine' : '')}><span className="fullCourtName">Court {courtLabel(ev, m.court)}</span><span>{line(m.a)} <span className="tightVs">vs</span> {line(m.b)}</span>{m.sa != null && m.sb != null && <b className="fullScore">{m.sa}–{m.sb}</b>}</div>; })}
+    {r.byes.length > 0 && <div className="fullSit">Sitting out: {r.byes.map(nm).join(', ')}{me && r.byes.includes(me) ? ' (you)' : ''}</div>}
+    {left.length > 0 && <div className="fullSit">Not on a court: {left.map(nm).join(', ')}</div>}
+  </div>;
+}
 function Schedule({ ev, act }: { ev: EventT; nm: (id: string) => string; act: Act }) {
-  return <div>{[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
-    {r.matches.map((m, j) => <CourtCard key={j} m={m} pickles={!ev.noStats} nm={id => slotName(ev, id, subRound(r))} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
-    {r.byes.length > 0 && <div className="muted small">Sat out: {r.byes.map(id => slotName(ev, id, subRound(r))).join(', ')}</div>}
+  const played = ev.rounds.filter(r => !r.playoff).length;
+  const upcoming = (ev.plan || []).map((r, k) => ({ r, n: played + k + 1 }));
+  return <div>
+    {upcoming.map(({ r, n }) => <details key={'p' + n} open={n === played + 1}><summary>Round {n} <span className="muted">upcoming</span></summary>
+      <FullRound ev={ev} label={'Round ' + n} r={r} nm={id => slotName(ev, id, n)} />
+    </details>)}
+    {[...ev.rounds].map((r, i) => <details key={i} open={i === ev.rounds.length - 1 && upcoming.length === 0}><summary>{roundLabel(ev, i)} <span className="muted">{r.matches.filter(scored).length}/{r.matches.length} scored</span></summary>
+    {r.matches.map((m, j) => <CourtCard key={j} m={m} tight={r.matches.length > 1} pickles={!ev.noStats} nm={id => slotName(ev, id, subRound(r))} cn={n => courtLabel(ev, n)} onScore={ev.finished ? undefined : (a, b) => act(e => { e.rounds[i].matches[j].sa = a; e.rounds[i].matches[j].sb = b; })} />)}
+    {r.byes.length > 0 && <div className="muted small">Sitting out: {r.byes.map(id => slotName(ev, id, subRound(r))).join(', ')}</div>}
+    {unlisted(ev, r).length > 0 && <div className="muted small">Not on a court: {unlisted(ev, r).map(id => slotName(ev, id, subRound(r))).join(', ')}</div>}
   </details>).reverse()}</div>;
 }
 
