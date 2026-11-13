@@ -1,4 +1,5 @@
 import type { EventT } from './engine';
+import { keptAlias } from './names';
 /** Names compare trimmed, case-insensitive, inner spaces collapsed. */
 export const normName = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 /** True if someone already in this game (joined) has this name. */
@@ -9,7 +10,7 @@ export function canonicalName(typed: string, known: string[]): string {
   const k = normName(cleaned);
   if (!k) return '';
   const hit = known.find(n => normName(n) === k);
-  return (hit ? hit.trim() : cleaned).slice(0, 40);
+  return (hit ? hit.trim() : keptAlias(cleaned, known) || cleaned).slice(0, 40);
 }
 /** One spelling per person: the name with the most scored games. A tie keeps the earlier spelling. */
 export function bestNames(rows: { name: string; games?: number }[]): string[] {

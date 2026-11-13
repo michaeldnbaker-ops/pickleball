@@ -11,6 +11,9 @@ describe('lobby', () => {
     expect(canonicalName('ANN  lee', known)).toBe('Ann Lee');
     expect(canonicalName('  Sam   Lee ', known)).toBe('Sam Lee');
     expect(canonicalName('Jeff', known)).toBe('Jeff');
+    expect(canonicalName('Craig E.', ['Craig Newman'])).toBe('Craig Newman');
+    expect(canonicalName('craig a. newman, esq.', ['Craig Newman'])).toBe('Craig Newman');
+    expect(canonicalName('Craig E.', ['Andrew Joyce'])).toBe('Craig E.');
     expect(canonicalName('Jeff S', known)).toBe('Jeff S');
     expect(canonicalName('   ', known)).toBe('');
   });

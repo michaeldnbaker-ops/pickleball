@@ -15,6 +15,9 @@ describe('name aliases', () => {
     expect(suggestName('Ryan', ['Ryan (FC)'])).toBeNull();
     expect(suggestName('Michael (FC)', ['Mike (FC)'])).toBe('Mike (FC)');
     expect(aliasReason('Craig Newman', 'Craig Neumann')).toBe('typo');
+    expect(suggestName('Craig E.', ['Craig Newman', 'Craig Smith'])).toBe('Craig Newman');
+    expect(suggestName('Craig A. Newman, Esq.', ['Craig Newman'])).toBe('Craig Newman');
+    expect(suggestName('Craig E. (FC)', ['Craig Newman'])).toBeNull();
     expect(aliasReason('M Ledet', 'Mike Ledet')).toBe('initial');
   });
   it('lists likely pairs and skips people who only share a first name', () => {

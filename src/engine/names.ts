@@ -101,11 +101,30 @@ const clubTag = (s: string) => { const m = normPerson(s).match(/\(([a-z0-9]{1,6}
 const CLUB_TAGS: Record<string, string> = { fc: 'francos', francos: 'francos', cg: 'crossgates', crossgates: 'crossgates', sc: 'stone creek', stonecreek: 'stone creek' };
 export function clubOf(s: string): string { const tag = clubTag(s); return tag ? (CLUB_TAGS[tag] || tag) : 'stone creek'; }
 
+/** Organizer-confirmed spellings of one person. The first entry is the name to keep. */
+const CONFIRMED: string[][] = [
+  ['craig newman', 'craig e.', 'craig e', 'craig a. newman, esq.'],
+];
+function confirmedHit(a: string, b: string): boolean {
+  if (clubOf(a) !== clubOf(b)) return false;
+  const ca = comparable(a), cb = comparable(b);
+  if (!ca || !cb || ca === cb) return false;
+  return CONFIRMED.some(g => g.includes(ca) && g.includes(cb));
+}
+/** The kept spelling when `typed` is a confirmed alias of someone in `known`. */
+export function keptAlias(typed: string, known: string[]): string | null {
+  const t = (typed || '').trim().replace(/\s+/g, ' ');
+  if (!t) return null;
+  for (const n of known) if (confirmedHit(t, n)) return n.trim();
+  return null;
+}
+
 /** Why these two stored names might be one player, or null when they look different. */
 export function aliasReason(a: string, b: string): AliasWhy | null {
   const A = splitName(a), B = splitName(b);
   if (!A.all || !B.all || normPerson(a) === normPerson(b)) return null;
   if (clubOf(a) !== clubOf(b)) return null;
+  if (confirmedHit(a, b)) return 'same name';
   if (A.all === B.all) return 'same name';
   const lastEq = !!A.last && A.last === B.last;
   const bothSingle = !A.last && !B.last;
