@@ -282,7 +282,7 @@ function NewEvent() {
   const [courtSet, setCourtSet] = useState<number[]>([1, 2, 3]); const courts = courtSet.length; const [rounds, setRounds] = useState(8);
   const [balance, setBalance] = useState(false); const [seeding, setSeeding] = useState<'random' | 'dupr'>('random');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [maxP, setMaxP] = useState(8); const [track, setTrack] = useState(true);
+  const [maxP, setMaxP] = useState(8); const [track, setTrack] = useState(true); const [crowns, setCrowns] = useState(true);
   const [homeClub, setHomeClub] = useState(S.SC); const [awayClub, setAwayClub] = useState(''); const [nT, setNT] = useState(2);
   const [clubNames, setClubNames] = useState<{ home: string[][]; away: string[][] }>({ home: [['', ''], ['', '']], away: [['', ''], ['', '']] });
   const isClub = format === 'club';
@@ -299,7 +299,7 @@ function NewEvent() {
     setBusy(true); localStorage.setItem('pb:lastPlace', place);
     players.forEach(S.addToRoster);
     const code = S.newCode();
-    const flags = { ...(track ? { trophy: true } : { noStats: true }), ...(S.testMode() ? { hidden: true } : {}) };
+    const flags = { ...(track ? (crowns ? { trophy: true } : { casual: true }) : { noStats: true }), ...(S.testMode() ? { hidden: true } : {}) };
     const ev: EventT = isClub
       ? { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: false, seeding: 'random', players: [], active: [], teams: [], rounds: [], createdAt: Date.now(), clubName: homeClub, club: newClub(homeClub.trim() || S.SC, awayClub.trim() || 'Visitors', nT), ...flags }
       : { id: code, name, date, place, format, courts, courtSet, totalRounds: rounds, balanceDupr: balance, seeding, players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: Date.now(), ...(players.length <= maxP ? { maxPlayers: maxP } : {}), ...(S.clubKey(homeClub) !== S.clubKey(S.SC) ? { clubName: homeClub } : {}), ...flags };
@@ -352,7 +352,9 @@ function NewEvent() {
       {!isClub && <label className="row check"><input type="checkbox" checked={balance} onChange={e => setBalance(e.target.checked)} /> Balance matchups by DUPR</label>}
       <label id="track-l">Stats</label>
       <div role="radiogroup" aria-labelledby="track-l">{([['Track stats', true], ['Just set up rounds (don\'t track)', false]] as const).map(([label, on]) => <button type="button" role="radio" aria-checked={track === on} key={label} className={'card tap fmt ' + (track === on ? 'sel' : '')} onClick={() => setTrack(on)}><span className="radio" aria-hidden="true">{track === on ? '✓' : ''}</span><span className="fmtText"><b>{label}</b></span></button>)}</div>
-      <p className="muted small">{track ? 'Results count in Overall stats. 1st place wins gold and 2nd place wins silver, and pickles count, once the match ends.' : 'Matchups and rotations only. This game stays out of Overall stats, the leaderboard, trophies, and pickles.'}</p>
+      {track && <><label id="crown-l">Crowns</label>
+      <div role="radiogroup" aria-labelledby="crown-l">{([['Award crowns', true], ['No crowns', false]] as const).map(([label, on]) => <button type="button" role="radio" aria-checked={crowns === on} key={label} className={'card tap fmt ' + (crowns === on ? 'sel' : '')} onClick={() => setCrowns(on)}><span className="radio" aria-hidden="true">{crowns === on ? '✓' : ''}</span><span className="fmtText"><b>{label}</b></span></button>)}</div></>}
+      <p className="muted small">{track ? (crowns ? 'Results count in Overall stats. 1st place wins gold and 2nd place wins silver, and pickles count, once the match ends.' : 'Results count in Overall stats and pickles. No gold or silver.') : 'Matchups and rotations only. This game stays out of Overall stats, the leaderboard, trophies, and pickles.'}</p>
       <div className="row"><button className="big" onClick={() => setStep(2)}>‹ Back</button><button className="big primary" disabled={busy || (isClub && courts !== nT)} onClick={create}>Create game <Ball /></button></div></>}
   </div>;
 }
@@ -408,7 +410,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
     {isHost(ev, code) && <AddGame ev={ev} act={act} />}
     {!ev.finished && isHost(ev, code) && <div className={'card completeGame' + (roundsAllScored(ev) ? ' ready' : '')} role="region" aria-label="Complete game">
       <b>{roundsAllScored(ev) ? 'All scores are in' : 'Complete this game any time'}</b>
-      <p className="muted small">{roundsAllScored(ev) ? (ev.noStats ? 'Lock the standings. This game is not tracked, so it stays out of Overall stats.' : 'Lock the standings and post stats and pickles.') : 'Unscored games are left out. Tracked games post stats and pickles when you complete.'}</p>
+      <p className="muted small">{roundsAllScored(ev) ? (ev.noStats ? 'Lock the standings. This game is not tracked, so it stays out of Overall stats.' : ev.casual ? 'Lock the standings and post stats and pickles. No crowns.' : 'Lock the standings and post stats and pickles.') : 'Unscored games are left out. Tracked games post stats and pickles when you complete.'}</p>
       <button className="big primary" onClick={() => setCompleteAsk(true)}>Complete game</button></div>}
     {!ev.finished && !isHost(ev, code) && roundsAllScored(ev) && <div className="card hostOnly" role="note"><Icon n="lock" size={18} /> All scores are in. Only {hostName(ev)} (who started the game) can complete it.</div>}
     {tab === 'courts' && <Courts ev={ev} act={act} nm={nm} me={S.getMe(code)} host={isHost(ev, code)} onComplete={() => setCompleteAsk(true)} />}
@@ -418,7 +420,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
     {tab === 'manage' && <Manage ev={ev} code={code} act={act} />}
     {completeAsk && <div className="sheetBg" onClick={() => setCompleteAsk(false)}><div className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="done-t" onClick={e => e.stopPropagation()}>
       <h2 id="done-t"><Icon n="flag" size={22} /> Complete this game?</h2>
-      <p>{roundsAllScored(ev) ? 'Every round is scored. The standings lock.' : 'The standings lock. Unscored games are left out.'} {ev.noStats ? 'This game is not tracked.' : 'Stats and pickles are posted.'}</p>
+      <p>{roundsAllScored(ev) ? 'Every round is scored. The standings lock.' : 'The standings lock. Unscored games are left out.'} {ev.noStats ? 'This game is not tracked.' : ev.casual ? 'Stats and pickles are posted. No crowns.' : 'Stats and pickles are posted.'}</p>
       <button className="big primary" onClick={() => { setCompleteAsk(false); act(e => endEvent(e)); }}>Complete game</button>
       <button className="big" onClick={() => setCompleteAsk(false)}>Keep playing</button></div></div>}
     <nav className="tabs">{(['courts', 'me', 'schedule', 'standings', 'manage'] as Tab[]).map(t => <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); scrollTo(0, 0); }}>{{ courts: <><Ball /> Courts</>, me: <><Icon n="user" size={22} /> Me</>, schedule: <><Icon n="list" size={22} /> Rounds</>, standings: <><Icon n="trophy" size={22} /> Standings</>, manage: <><Icon n="settings" size={22} /> Manage</> }[t]}</button>)}</nav>
@@ -658,8 +660,9 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
     {tw.length > 0 && <div className="card trophyWin" role="status"><span aria-hidden="true">🏆</span> {tw.length > 1 ? 'Winners' : 'Winner'}: <b>{tw.map(t => t.name).join(' & ')}</b>{tw.length > 1 ? ' (co-winners)' : ''}</div>}
     {sw.length > 0 && <div className="card silverWin" role="status"><span aria-hidden="true">🥈</span> 2nd place: <b>{sw.map(t => t.name).join(' & ')}</b>{sw.length > 1 ? ' (tie)' : ''}</div>}
     <div className={'lockNote ' + (ev.finished ? 'readOnly' : 'liveNote')} role="note">{ev.noStats ? <>{ev.finished ? 'Final standings' : 'Live'} · not counted in Overall stats, trophies, or pickles</> : ev.finished ? <><Icon n="lock" size={18} /> Final standings · match complete</> : <>Live · updates as scores are entered · counts toward Overall stats once the match ends</>}</div>
-    {!ev.noStats && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> 1st place wins gold, 2nd place wins silver when the game is completed</div>}
-    {ev.finished && st[0] && !tw.length && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
+    {!ev.noStats && !ev.casual && !ev.finished && <div className="card trophyNote"><span aria-hidden="true">🏆</span> 1st place wins gold, 2nd place wins silver when the game is completed</div>}
+    {ev.casual && <div className="card" role="note">Stats only · no crowns</div>}
+    {ev.finished && st[0] && !tw.length && !ev.casual && <div className="card champ"><Icon n="medal" /> Top player: {st[0].name} ({st[0].w}W, {st[0].diff > 0 ? '+' : ''}{st[0].diff})</div>}
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>Win%</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>

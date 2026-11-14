@@ -33,7 +33,7 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
 interface X { slot: string; from: number; name: string | null }
-interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; noStats?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
+interface Ev { clubName?: string; club?: { home?: string; away?: string }; trophy?: boolean; casual?: boolean; noStats?: boolean; finished?: boolean; addedLater?: boolean; totalRounds?: number; active?: string[]; startedAt?: number; startedBy?: string; host?: string; date?: unknown; courts?: unknown; format?: unknown; seeding?: unknown; balanceDupr?: unknown; teams?: string[][]; name?: string; date?: string; hidden?: boolean; maxPlayers?: number; courtSet?: unknown; players?: { id: string; name: string }[]; rounds?: R[]; plan?: R[]; subs?: X[] }
 /** Idempotent: one row per (event, round, court); edits update, cleared/voided scores are removed. */
 /** Scored games for stats, trophies, and pickles. A past-game import is one round per match; playoffs are tagged so they stay out of trophies. */
 export function statRows(code: string, ev: Ev): unknown[][] {
@@ -77,8 +77,8 @@ export function trophyWinners(rows: unknown[][]) {
   return out;
 }
 /** Gold and silver are written for every finished game that is tracking stats. */
-export function trophyAwards(ev: { trophy?: boolean; finished?: boolean; noStats?: boolean }, rows: unknown[][]) {
-  if (ev.noStats || !ev.finished) return [];
+export function trophyAwards(ev: { trophy?: boolean; casual?: boolean; finished?: boolean; noStats?: boolean }, rows: unknown[][]) {
+  if (ev.noStats || ev.casual || !ev.finished) return [];
   return trophyWinners(rows);
 }
 /** Gold rows already stored are left as they are. Missing gold is added. Silver is whoever is 2nd and does not already have gold. */
@@ -87,7 +87,7 @@ export function mergeAwards<T extends { k: string; place: 'gold' | 'silver' }>(e
   return awards.filter(a => !have.has(a.k));
 }
 async function syncTrophies(code: string, ev: Ev, rows: unknown[][], replaceAwards = false) {
-  if (ev.noStats || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
+  if (ev.noStats || ev.casual || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
   if (replaceAwards) await pool.query('delete from trophies where code=$1', [code]);
   const gold = replaceAwards ? [] : (await pool.query("select k from trophies where code=$1 and coalesce(place,'gold') <> 'silver'", [code])).rows.map(r => r.k as string);
   // 2nd place can move if a past game's scores are edited. Gold rows are not deleted or updated.
@@ -349,7 +349,7 @@ export default {
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);
           if (!(body.data.rounds || []).length) return j({ error: 'already started', data: cur }, 409);
           // Setup is locked after the start: day/time, courts, format, seeding, DUPR balance, pairs/teams.
-          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy', 'clubName', 'noStats'] as const)
+          for (const f of ['date', 'courts', 'courtSet', 'format', 'seeding', 'balanceDupr', 'teams', 'club', 'trophy', 'casual', 'clubName', 'noStats'] as const)
             if (f in body.data && JSON.stringify(body.data[f]) !== JSON.stringify(cur[f])) return j({ error: 'locked', field: f, data: cur }, 409);
           // Players can still join, and the host can add or drop. The round in progress (and every scored round) stays.
           const roster = rosterWrite(cur, body.data, isStarter); if (roster.error) return j({ error: roster.error, data: cur }, 409);

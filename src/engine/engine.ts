@@ -19,6 +19,7 @@ export interface EventT {
   maxPlayers?: number; // cap chosen on Create (4/8/12/16); missing = no cap (older games)
   clubName?: string; // stats club (missing = Stone Creek; Club vs Club = home club)
   trophy?: boolean; // Every tracked game crowns 1st (gold) and 2nd (silver) when it is completed. Untracked games (noStats) award none.
+  casual?: boolean; // Tracked, but no gold or silver. Stats and pickles still count.
   noStats?: boolean; // "Just set up rounds (don't track)": matchups and rotations only. Left out of stats, the leaderboard, trophies, and pickles.
   startedAt?: number; startedBy?: string; host?: string; // set once by whoever taps Start; setup is locked after this
   plan?: Round[]; planKey?: string; // pre-drawn upcoming rounds (score-independent formats)
@@ -586,7 +587,7 @@ const eligible = (ev: EventT) => standings(ev).filter(s => s.gp > 0 && !isGuest(
 const ahead = (a: Standing, b: Standing) => a.w > b.w || (a.w === b.w && a.diff > b.diff);
 /** Tracked, finished game: regular-round standings, most wins then point differential. Ties on both share the place. Guests excluded. Untracked games award nothing. Same rule as the server. */
 export function trophyPodium(ev: EventT): { gold: Standing[]; silver: Standing[] } {
-  if (!ev.finished || ev.noStats) return { gold: [], silver: [] };
+  if (!ev.finished || ev.noStats || ev.casual) return { gold: [], silver: [] };
   const st = eligible(ev);
   if (!st.length) return { gold: [], silver: [] };
   const top = st.reduce((x, s) => ahead(s, x) ? s : x, st[0]);

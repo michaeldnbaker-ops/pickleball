@@ -25,6 +25,7 @@ describe('trophyWinners', () => {
   it('an untracked or unfinished game awards nothing, and existing gold is not replaced', () => {
     const rows = [row('C:r1:1', ['Ann', 'Bob'], ['Cat', 'Dan'], 11, 0)];
     expect(trophyAwards({ noStats: true, finished: true }, rows)).toEqual([]);
+    expect(trophyAwards({ casual: true, finished: true }, rows)).toEqual([]);
     expect(trophyAwards({ finished: false }, rows)).toEqual([]);
     const awards = trophyAwards({ finished: true }, rows);
     expect(mergeAwards(['ann', 'bob'], awards).map(a => a.place)).toEqual(['silver', 'silver']);

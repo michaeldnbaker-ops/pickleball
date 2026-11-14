@@ -25,6 +25,9 @@ describe('silver trophies and pickles', () => {
     expect(trophyWinners(p)).toEqual([]);
     expect(trophyWinners(base({ finished: false }))).toEqual([]);
     expect(trophyWinners(base({ noStats: true }))).toEqual([]);
+    expect(trophyPodium(base({ casual: true })).gold).toEqual([]);
+    expect(trophyPodium(base({ casual: true })).silver).toEqual([]);
+    expect(pickleCounts(base({ casual: true }))).toHaveLength(2);
     expect(trophyWinners(base({ trophy: false })).map(s => s.name).sort()).toEqual(['Ann', 'Bob']);
   });
   it('a pickle is any X–0 loss, in any format, for each player on the scoreless team', () => {
