@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen } from './engine/engine';
+import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen, appendScoredGame } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -405,6 +405,7 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
       <button className="ghost refresh" onClick={refresh} aria-label="Refresh">{loading ? '…' : <Icon n="refresh" size={22} />}</button></header>
     {sharing && <ShareGame ev={ev} code={code} onClose={() => setSharing(false)} />}
     <div className={'status ' + (online ? '' : 'off')}>{online ? (stamp ? 'Updated ' + stamp.toLocaleTimeString([], { timeStyle: 'short' }) + ' · pull down or tap refresh' : '') : 'Offline — changes saved on this phone, will upload when back online'}</div>
+    {isHost(ev, code) && <AddGame ev={ev} act={act} />}
     {!ev.finished && isHost(ev, code) && <div className={'card completeGame' + (roundsAllScored(ev) ? ' ready' : '')} role="region" aria-label="Complete game">
       <b>{roundsAllScored(ev) ? 'All scores are in' : 'Complete this game any time'}</b>
       <p className="muted small">{roundsAllScored(ev) ? (ev.noStats ? 'Lock the standings. This game is not tracked, so it stays out of Overall stats.' : 'Lock the standings and post stats and pickles.') : 'Unscored games are left out. Tracked games post stats and pickles when you complete.'}</p>
@@ -424,6 +425,24 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   </div>;
 }
 
+function AddGame({ ev, act }: { ev: EventT; act: Act }) {
+  const players = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  const [open, setOpen] = useState(false);
+  const [a1, setA1] = useState(''); const [a2, setA2] = useState(''); const [b1, setB1] = useState(''); const [b2, setB2] = useState('');
+  const [sa, setSa] = useState(''); const [sb, setSb] = useState('');
+  const pick = (id: string, set: (v: string) => void) => set(id);
+  const opts = (value: string, set: (v: string) => void, label: string) => <label>{label}<select aria-label={label} value={value} onChange={e => pick(e.target.value, set)}><option value="">Choose</option>{players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>;
+  const save = () => { if (!ready) return; act(e => { appendScoredGame(e, [a1, a2], [b1, b2], Number(sa), Number(sb)); }); setOpen(false); setSa(''); setSb(''); };
+  if (!open) return <div className="card" role="region" aria-label="Add a game"><b>Extra game</b><p className="muted small">Four players stayed for another game? Add that score here. It counts in the standings.</p><button className="big primary" onClick={() => setOpen(true)}>Add a game</button></div>;
+  const ids = [a1, a2, b1, b2]; const ready = new Set(ids).size === 4 && ids.every(Boolean) && sa !== '' && sb !== '' && sa !== sb;
+  return <div className="card" role="region" aria-label="Add a game"><h2>Add a game</h2>
+    {opts(a1, setA1, 'Side A, player 1')}{opts(a2, setA2, 'Side A, player 2')}
+    {opts(b1, setB1, 'Side B, player 1')}{opts(b2, setB2, 'Side B, player 2')}
+    <div className="row"><label>Side A score<input aria-label="Side A score" inputMode="numeric" value={sa} onChange={e => setSa(e.target.value.replace(/\D/g, '').slice(0, 2))} /></label>
+      <label>Side B score<input aria-label="Side B score" inputMode="numeric" value={sb} onChange={e => setSb(e.target.value.replace(/\D/g, '').slice(0, 2))} /></label></div>
+    <button className="big primary" disabled={!ready} onClick={save}>Save game</button>
+    <button className="big" onClick={() => setOpen(false)}>Cancel</button></div>;
+}
 function usePullToRefresh(fn: () => void) {
   const start = useRef<number | null>(null);
   useEffect(() => {

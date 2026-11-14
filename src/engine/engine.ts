@@ -491,6 +491,37 @@ export function roundsAllScored(ev: EventT) {
   const playoffsDone = pos.length === 0 || (pos.every(full) && pos[pos.length - 1].matches.length === 1);
   return regularsDone && playoffsDone;
 }
+/** One extra game after the rounds already played. The other players sit out. Existing scores stay put. */
+export function appendScoredGame(ev: EventT, a: string[], b: string[], sa: number, sb: number): string | null {
+  const ids = [...a, ...b];
+  if (a.length !== 2 || b.length !== 2 || new Set(ids).size !== 4) return 'Pick four different players';
+  if (!ids.every(id => ev.active.includes(id) && ev.players.some(p => p.id === id))) return 'Players must be in this game';
+  if (!Number.isInteger(sa) || !Number.isInteger(sb) || sa < 0 || sa > 99 || sb < 0 || sb > 99 || sa === sb) return 'Enter two different scores';
+  const n = Math.max(0, ...ev.rounds.filter(r => !r.playoff).map(r => r.n)) + 1;
+  const playing = new Set(ids);
+  const round: Round = { n, matches: [{ court: 1, a: [...a], b: [...b], sa, sb }], byes: ev.active.filter(id => !playing.has(id)) };
+  const po = ev.rounds.findIndex(r => r.playoff);
+  if (po < 0) ev.rounds.push(round); else ev.rounds.splice(po, 0, round);
+  if (ev.totalRounds < n) ev.totalRounds = n;
+  return null;
+}
+/** A finished game save that only adds scored rounds after the ones already stored. */
+export function isScoreAppend(cur: { finished?: boolean; rounds?: { playoff?: boolean; matches?: Match[] }[]; active?: string[] }, next: { finished?: boolean; rounds?: { playoff?: boolean; matches?: Match[] }[]; active?: string[] }): boolean {
+  if (!cur.finished || !next.finished) return false;
+  const cr = cur.rounds || [], nr = next.rounds || [];
+  if (nr.length <= cr.length) return false;
+  for (let i = 0; i < cr.length; i++) if (JSON.stringify(cr[i]) !== JSON.stringify(nr[i])) return false;
+  const ids = new Set(next.active || []);
+  for (const r of nr.slice(cr.length)) {
+    const seen = new Set<string>();
+    if (!r.matches?.length || r.playoff) return false;
+    for (const m of r.matches) {
+      if (m.sa == null || m.sb == null || m.sa === m.sb) return false;
+      for (const id of [...(m.a || []), ...(m.b || [])]) { if (seen.has(id) || !ids.has(id)) return false; seen.add(id); }
+    }
+  }
+  return true;
+}
 /** End: keep every scored match, including a later round played after a skip. A blank court is left out and is never stored as 0–0. */
 export function endEvent(ev: EventT) {
   for (const r of ev.plan || []) {

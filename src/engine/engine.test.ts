@@ -222,7 +222,7 @@ describe('drop player & play-ahead lock', () => {
   });
 });
 
-import { startEvent, addRounds, endEvent, addActivePlayer, trophyWinners, fillRemaining } from './engine';
+import { startEvent, addRounds, endEvent, addActivePlayer, trophyWinners, fillRemaining, appendScoredGame, isScoreAppend, trophyPodium } from './engine';
 describe('lobby start, any player count, extend/end', () => {
   const mk = (n: number, format: Format = 'rotating', courts = 3, totalRounds = 6): EventT => { const players = Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i })); return { id: 'X', name: 'x', date: '', place: '', format, courts, totalRounds, balanceDupr: false, seeding: 'random', players, active: players.map(p => p.id), teams: [], rounds: [], createdAt: 0 }; };
   it('lobby has no rounds or plan until started', () => { const ev = mk(10); expect(ensurePlan(ev)).toBe(false); expect(ev.plan).toBeUndefined(); });
@@ -308,6 +308,32 @@ describe('lobby start, any player count, extend/end', () => {
     const ev = mk(8, 'rotating', 2, 1); startEvent(ev, mulberry(6)); expect(ev.plan).toEqual([]);
     addRounds(ev, 3, mulberry(7)); expect(ev.totalRounds).toBe(4); expect(ev.plan!.length).toBe(3);
     endEvent(ev); expect(ev.finished).toBe(true); expect(ev.plan).toBeUndefined();
+  });
+  it('adds one scored game after the rounds already played and leaves those scores alone', () => {
+    const ev = mk(8, 'rotating', 2, 2); startEvent(ev, mulberry(4));
+    ev.rounds[0].matches.forEach(m => { m.sa = 11; m.sb = 7; });
+    const frozen = JSON.stringify(ev.rounds);
+    endEvent(ev);
+    const before = JSON.stringify(ev.rounds);
+    expect(appendScoredGame(ev, ['p0', 'p0'], ['p1', 'p2'], 11, 8)).toBeTruthy();
+    expect(appendScoredGame(ev, ['p0', 'p1'], ['p2', 'p3'], 11, 11)).toBeTruthy();
+    expect(appendScoredGame(ev, ['p0', 'p1'], ['p2', 'p3'], 11, 8)).toBeNull();
+    expect(appendScoredGame(ev, ['p0', 'p1'], ['p2', 'p3'], 11, 6)).toBeNull();
+    expect(JSON.stringify(ev.rounds.slice(0, before ? JSON.parse(before).length : 0))).toBe(before);
+    const added = ev.rounds.slice(-2);
+    expect(added.map(r => r.n)).toEqual([2, 3]);
+    expect(added[0].matches[0]).toMatchObject({ a: ['p0', 'p1'], b: ['p2', 'p3'], sa: 11, sb: 8 });
+    expect(added[1].matches[0].sb).toBe(6);
+    for (const r of added) {
+      const ids = [...r.matches[0].a, ...r.matches[0].b, ...r.byes];
+      expect(new Set(ids).size).toBe(8);
+    }
+    expect(ev.finished).toBe(true);
+    expect(isScoreAppend({ finished: true, rounds: JSON.parse(before), active: ev.active }, ev)).toBe(true);
+    expect(isScoreAppend({ finished: true, rounds: ev.rounds, active: ev.active }, ev)).toBe(false);
+    const pod = trophyPodium(ev);
+    expect(pod.gold.length).toBeGreaterThan(0);
+    expect(frozen).not.toBe('');
   });
 });
 

@@ -5,6 +5,7 @@ import { buildPast } from './past';
 import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
 import { rosterWrite } from './roster';
 import { listDupes, mergePlayers } from './merge';
+import { isScoreAppend } from '../src/engine/engine';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
 const H = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,PUT,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type, x-admin', 'content-type': 'application/json' };
@@ -52,12 +53,12 @@ export function statRows(code: string, ev: Ev): unknown[][] {
   }
   return rows;
 }
-async function syncStats(code: string, ev: Ev) {
+async function syncStats(code: string, ev: Ev, replaceAwards = false) {
   await ensureStats();
   if (ev.noStats) { await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); return; }
   const rows = statRows(code, ev);
   const ids = rows.map(r => r[0] as string);
-  await syncTrophies(code, ev, rows);
+  await syncTrophies(code, ev, rows, replaceAwards);
   await pool.query('delete from stat_matches where code=$1 and not (id = any($2::text[]))', [code, ids]);
   for (const r of rows) await pool.query(`insert into stat_matches(id,code,ev_name,date,hidden,ak,bk,an,bn,sa,sb,excl,ca,cb) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     on conflict(id) do update set ev_name=excluded.ev_name, date=excluded.date, hidden=excluded.hidden, ak=excluded.ak, bk=excluded.bk, an=excluded.an, bn=excluded.bn, sa=excluded.sa, sb=excluded.sb, excl=excluded.excl, ca=excluded.ca, cb=excluded.cb, updated_at=now()`, r);
@@ -85,9 +86,10 @@ export function mergeAwards<T extends { k: string; place: 'gold' | 'silver' }>(e
   const have = new Set(existingGold);
   return awards.filter(a => !have.has(a.k));
 }
-async function syncTrophies(code: string, ev: Ev, rows: unknown[][]) {
+async function syncTrophies(code: string, ev: Ev, rows: unknown[][], replaceAwards = false) {
   if (ev.noStats || !ev.finished) { await pool.query('delete from trophies where code=$1', [code]); return; }
-  const gold = (await pool.query("select k from trophies where code=$1 and coalesce(place,'gold') <> 'silver'", [code])).rows.map(r => r.k as string);
+  if (replaceAwards) await pool.query('delete from trophies where code=$1', [code]);
+  const gold = replaceAwards ? [] : (await pool.query("select k from trophies where code=$1 and coalesce(place,'gold') <> 'silver'", [code])).rows.map(r => r.k as string);
   // 2nd place can move if a past game's scores are edited. Gold rows are not deleted or updated.
   await pool.query("delete from trophies where code=$1 and place = 'silver'", [code]);
   for (const w of mergeAwards(gold, trophyWinners(rows))) await pool.query('insert into trophies(code,k,name,ev_name,date,hidden,w,diff,club,place) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict do nothing', [code, w.k, w.name, ev.name || '', ev.date || '', !!ev.hidden, w.w, w.diff, w.club || clubOf(ev), w.place]);
@@ -331,8 +333,10 @@ export default {
         const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as Ev | undefined;
         const by = url.searchParams.get('by') || '';
         const orgQ = url.searchParams.get('org') === '1';
-        // A completed match is read-only for everyone.
-        if (cur?.finished && body.data) return j({ error: 'finished', data: cur }, 409);
+        const isStarterEarly = !!cur && (cur.startedBy ? (by === cur.startedBy || (cur.startedBy === 'organizer' && orgQ)) : orgQ);
+        // A completed game stays locked, except the host adding scored games after the ones already saved.
+        const append = !!(cur?.finished && body.data?.finished && isStarterEarly && isScoreAppend(cur, body.data));
+        if (cur?.finished && body.data && !append) return j({ error: 'finished', data: cur }, 409);
         const started = !!cur && (cur.rounds || []).length > 0;
         // Host: the phone that tapped Start. Older games with no starter treat the creator's phone as host.
         const isStarter = !!cur && (cur.startedBy ? (by === cur.startedBy || (cur.startedBy === 'organizer' && orgQ)) : orgQ);
@@ -384,7 +388,7 @@ export default {
         }
         const { rows } = await pool.query('insert into events(code,data) values($1,$2) on conflict(code) do update set data=excluded.data, version=events.version+1, updated_at=now() returning version, updated_at', [code, JSON.stringify(body.data)]);
         if (body.data) { await ensureStats(); await addClub(body.data.clubName, !!body.data.hidden).catch(() => {}); if (body.data.format === 'club') { await addClub(body.data.club?.home, !!body.data.hidden).catch(() => {}); await addClub(body.data.club?.away, !!body.data.hidden).catch(() => {}); } }
-        let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); } } catch (e) { stats = String(e); }
+        let stats = 'ok'; try { if (body.data?.finished) await syncStats(code, body.data, append); else { await ensureStats(); await pool.query('delete from stat_matches where code=$1', [code]); await pool.query('delete from trophies where code=$1', [code]); } } catch (e) { stats = String(e); }
         // New public game: tell everyone who opted in. Hidden test games and edits stay quiet. A slow push service must not block the creator.
         let push = 0; try { if (shouldNotify(!cur, body.data)) { await ensureStats(); const note = noteFor(String(body.data?.name || ''), String(body.data?.date || ''), code); const { rows: subs } = await pool.query('select endpoint, p256dh, auth from push_subs where test=false'); push = await Promise.race([notifySubs(pool, subs, note), new Promise<number>(res => setTimeout(() => res(0), 8000))]); } } catch { /* still created */ }
         return j({ ...rows[0], stats, push });
