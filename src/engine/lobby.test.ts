@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normName, nameTaken, dupCount, removePlayer, canonicalName, bestNames, joinNames } from './lobby';
+import { normName, nameTaken, dupCount, removePlayer, canonicalName, bestNames, joinNames, canEditSetup } from './lobby';
 import type { EventT } from './engine';
 const ev = (): EventT => ({ id: 'X', name: 'g', date: '', place: '', courts: 1, format: 'rotating', seeding: 'random', balanceDupr: false, totalRounds: 3, teams: [['a', 'b']], rounds: [],
   players: [{ id: 'a', name: 'Jeff Stempel' }, { id: 'b', name: 'Ian' }, { id: 'c', name: 'jeff  stempel ' }], active: ['a', 'b', 'c'] } as unknown as EventT);
@@ -89,5 +89,11 @@ describe('player cap', () => {
   it('only 4/8/12/16 count as a cap; older games have none', () => { expect(capOf(g(0, 8))).toBe(8); expect(capOf(g(0))).toBe(0); expect(capOf(g(0, 7))).toBe(0); });
   it('full at the cap, open below it, never full without a cap', () => { expect(isFull(g(8, 8))).toBe(true); expect(isFull(g(7, 8))).toBe(false); expect(isFull(g(30))).toBe(false); });
   it('a drop out reopens a spot', () => { const e = ev(); (e as EventT).maxPlayers = 4; e.players.push({ id: 'd', name: 'Dee' }); e.active.push('d'); expect(isFull(e)).toBe(true); removePlayer(e, 'd'); expect(isFull(e)).toBe(false); });
+  it('before the start, the organizer or a club admin can change the cap and rounds', () => {
+    expect(canEditSetup(false, true, false)).toBe(true);
+    expect(canEditSetup(false, false, true)).toBe(true);
+    expect(canEditSetup(false, false, false)).toBe(false);
+    expect(canEditSetup(true, true, true)).toBe(false);
+  });
   it('default cap 8 grows to fit pre-selected players', () => { expect(fitCap(0)).toBe(8); expect(fitCap(8)).toBe(8); expect(fitCap(9)).toBe(12); expect(fitCap(13)).toBe(16); expect(fitCap(17)).toBe(0); });
 });

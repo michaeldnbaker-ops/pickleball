@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames } from './engine/lobby';
+import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames, canEditSetup } from './engine/lobby';
 import { suggestName, whyText, type AliasWhy } from './engine/names';
 import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen, appendScoredGame } from './engine/engine';
 import * as S from './store';
@@ -736,9 +736,11 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
         <div className="row"><button className="primary" disabled={!renaming.trim()} onClick={saveName}>Save name</button><button className="ghost" onClick={() => setRenaming(null)}>Cancel</button></div></div>)}
     <div className="card lobbyWhen"><div className="when"><div className="wday">{w.day.slice(0, 3)}</div><div className="wdate">{w.date}</div></div><div><b>{w.day} · {w.time}</b><div className="muted">{ev.place || 'Place TBA'}</div><div className="muted small">{ev.courts} courts ({courtsText(ev)}) · {ev.totalRounds} rounds{cap ? ` · max ${cap} players` : ''}</div></div></div>
     <div className="lobbyStatus"><span className="pulse" aria-hidden="true" /> {full ? 'Full' : 'Signing up'} · <b>{joined.length} joined</b>{cap ? <span className="muted"> · {cap} max</span> : null}</div>
-    {org && !club && <div className="card maxEdit"><div className="muted small" id="lobby-max-l">Max players (only you can change this until the game starts)</div>
+    {canEditSetup(!!ev.rounds.length, org, !!S.adminKey()) && !club && <div className="card maxEdit"><div className="muted small" id="lobby-max-l">Max players</div>
       <div className="row maxRow" role="radiogroup" aria-labelledby="lobby-max-l">{CAPS.map(c => <button key={c} type="button" role="radio" aria-checked={cap === c} disabled={c < joined.length} className={'chip maxChip ' + (cap === c ? 'on' : '')}
         onClick={() => cap !== c && act(e => { if (!e.rounds.length && c >= new Set(e.active).size) e.maxPlayers = c; })}>{c}</button>)}</div>
+      <label id="lobby-rounds-l">Rounds</label>
+      <Stepper value={ev.totalRounds} min={1} max={40} onChange={n => act(e => { if (!e.rounds.length) e.totalRounds = n; })} />
       {!cap && <div className="muted small">No limit set</div>}</div>}
     {canStart && <button className="big primary huge" disabled={starting || !ok} onClick={() => ok && openStart()}><Icon n="play" /> {starting ? 'Starting…' : 'Start game'}</button>}
     {canStart && !ok && <p className="startNeed" role="status">{club ? 'Fill every home team spot to start (empty visitor spots play as guests)' : startBlock(joined.length, ev.format)}</p>}

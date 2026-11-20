@@ -44,5 +44,7 @@ export const CAPS = [4, 8, 12, 16];
 export const capOf = (ev: Pick<EventT, 'maxPlayers'>) => CAPS.includes(Number(ev.maxPlayers)) ? Number(ev.maxPlayers) : 0;
 /** Signed up count has reached the cap: no more joins until someone drops out. */
 export const isFull = (ev: Pick<EventT, 'maxPlayers' | 'active'>) => { const c = capOf(ev); return !!c && new Set(ev.active).size >= c; };
+/** Before the start, the creator's phone or a club admin can change the cap and the round count. */
+export const canEditSetup = (started: boolean, org: boolean, admin: boolean) => !started && (org || admin);
 /** Smallest cap that fits n pre-selected players (default 8). */
 export const fitCap = (n: number, def = 8) => n <= def ? def : CAPS.find(c => c >= n) ?? 0;

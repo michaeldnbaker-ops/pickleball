@@ -23,6 +23,10 @@ describe('changing the cap (server)', () => {
     expect(capChange(g(6, 8), g(6, 4), { started: false, org: true })).toEqual({ max: 8, error: 'max below players' });
     expect(capChange(g(6, 8), g(6, 5), { started: false, org: true }).error).toBe('bad max');
   });
+  it('a club admin counts as the organizer for a cap change before the start', () => {
+    expect(capChange(g(8, 12), g(8, 8), { started: false, org: true })).toEqual({ max: 8 });
+    expect(capChange(g(8, 12), g(8, 8), { started: false, org: false })).toEqual({ max: 12 });
+  });
   it('non-creators keep the stored cap; a write without maxPlayers keeps it', () => {
     expect(capChange(g(6, 8), g(6, 16), { started: false, org: false })).toEqual({ max: 8 });
     expect(capChange(g(6, 8), g(6), { started: false, org: true })).toEqual({ max: 8 });

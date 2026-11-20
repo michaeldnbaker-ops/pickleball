@@ -333,6 +333,8 @@ export default {
         const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as Ev | undefined;
         const by = url.searchParams.get('by') || '';
         const orgQ = url.searchParams.get('org') === '1';
+        const admin = await isAdmin(req);
+        const setup = orgQ || admin;
         const isStarterEarly = !!cur && (cur.startedBy ? (by === cur.startedBy || (cur.startedBy === 'organizer' && orgQ)) : orgQ);
         // A completed game stays locked, except the host adding scored games after the ones already saved.
         const append = !!(cur?.finished && body.data?.finished && isStarterEarly && isScoreAppend(cur, body.data));
@@ -343,7 +345,9 @@ export default {
                 // Picked courts (by letter) must match the court count; anything malformed is dropped so the game falls back to A, B, C….
         if (body.data && 'courtSet' in body.data && !validCourtSet(body.data.courtSet, body.data.courts)) delete body.data.courtSet;
         // The player cap: creator before the start, host or creator after. 4/8/12/16, never below who is already in.
-        if (cur && body.data) { const c = capChange(cur, body.data, { started, org: orgQ, host: started && isStarter }); if (c.error) return j({ error: c.error, data: cur }, 409); if (c.max) body.data.maxPlayers = c.max; else delete body.data.maxPlayers; }
+        if (cur && body.data) { const c = capChange(cur, body.data, { started, org: setup, host: started && isStarter }); if (c.error) return j({ error: c.error, data: cur }, 409); if (c.max) body.data.maxPlayers = c.max; else delete body.data.maxPlayers; }
+        // Before the start, only the creator's phone or a club admin can change how many rounds are planned.
+        if (!started && cur && body.data && Number(body.data.totalRounds) !== Number(cur.totalRounds) && !setup) body.data.totalRounds = cur.totalRounds;
         if (started && body.data) {
           // Start is one-time. A second start (different startedAt) or a re-draw of Round 1 is refused; caller gets the existing game.
           if (body.data.startedAt && cur.startedAt && body.data.startedAt !== cur.startedAt) return j({ error: 'already started', data: cur }, 409);

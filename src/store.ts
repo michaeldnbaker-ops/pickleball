@@ -94,7 +94,7 @@ export async function fetchRemote(code: string): Promise<EventT | null> {
 }
 export class StartedError extends Error { reason: string; constructor(reason = 'started') { super(reason); this.reason = reason; } }
 export async function pushRemote(code: string, ev: EventT) {
-  const r = await fetch(`${API}/e/${code}?by=${encodeURIComponent(getMe(code) || (isOrg(code) ? 'organizer' : ''))}${isOrg(code) ? '&org=1' : ''}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: ev }) });
+  const r = await fetch(`${API}/e/${code}?by=${encodeURIComponent(getMe(code) || (isOrg(code) ? 'organizer' : ''))}${isOrg(code) ? '&org=1' : ''}`, { method: 'PUT', headers: { 'content-type': 'application/json', ...(adminKey() ? { 'x-admin': adminKey() } : {}) }, body: JSON.stringify({ data: ev }) });
   if (r.status === 409) { let why = 'started'; try { why = (await r.json()).error || why; } catch { /* keep */ } throw new StartedError(why); }
   if (!r.ok) throw new Error('HTTP ' + r.status);
 }
