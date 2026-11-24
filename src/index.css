@@ -249,3 +249,12 @@ table:not(.clubTable) td:nth-child(2) .linkBtn{white-space:nowrap;display:block;
 .clubTable td:first-child,.clubTable th:first-child{white-space:normal;text-align:left;overflow-wrap:anywhere;width:100%}
 @media (max-width:420px){table{font-size:.85rem}th,td{padding:8px 3px}th{font-size:.75rem}}
 @media (max-width:370px){table{font-size:.8rem}th,td{padding:7px 2px}}
+.askYou h3{margin:0 0 4px}.askYou .youPick{margin:8px 0 0;text-align:left;display:block}.askYou .newPick{margin:12px 0 0}
+.askYou .pickList{margin:12px 0 0}.askYou .pickList summary{min-height:44px;display:flex;align-items:center;font-weight:700;color:var(--skyText);cursor:pointer}
+.askYou .pickList .chips{max-height:40vh;overflow:auto;margin-top:8px}.askYou .pickList .chip{min-height:44px}
+button.editMine{margin-top:2px}
+.playerTools select,.playerTools input{width:100%;margin:4px 0}.playerTools .aliasRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+.pform .nickRow{margin:10px 0 0}.pform .nickRow label{margin:0 0 6px;display:block}.pform .nickInput{width:100%}
+.pform .nickAll{display:flex;align-items:center;gap:8px;min-height:44px;font-weight:600}.pform .nickAll input{width:22px;height:22px;min-height:0;padding:0;margin:0;flex:none;border:none;accent-color:var(--sky,#3b82f6)}
+.pform .nameInput[readonly]{background:transparent}
+.realName{margin:-6px 0 8px}

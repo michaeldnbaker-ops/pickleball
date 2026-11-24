@@ -67,16 +67,22 @@ export async function listDupes(db: Db, test: boolean) {
   return out;
 }
 
-/** Back up the rows, then rewrite stored games onto one spelling and rebuild their stats. */
-export async function mergePlayers(pool: Db, names: string[], confirm: boolean, sync: (code: string, ev: MergeEv) => Promise<void>) {
-  const plan = await previewMerge(pool, names);
-  if (plan.error) return { status: 400, body: { error: plan.error } };
-  if (!confirm) return { status: 200, body: { preview: true, kept: plan.kept, why: plan.why, events: plan.events } };
-  const rows = await eventsOf(pool, plan.keys!);
+/** Which club a stored game counts for: home, plus the visiting club when it has one. */
+export function evClubs(ev: { format?: unknown; clubName?: string; club?: { home?: string; away?: string }; awayClub?: string }): string[] {
+  const home = (ev.format === 'club' && ev.club?.home?.trim()) || ev.clubName?.trim() || 'Stone Creek';
+  const away = ev.format === 'club' ? ev.club?.away?.trim() : ev.awayClub?.trim();
+  return [home, away || ''].filter(Boolean).map(normPerson);
+}
+
+/** Back up the rows, then rewrite stored games onto one spelling and rebuild their stats. A club limits it to that club's games. */
+export async function rewriteNames(pool: Db, names: string[], kept: string, reason: string, sync: (code: string, ev: MergeEv) => Promise<void>, club?: string) {
+  const keys = [...new Set(names.map(normPerson).filter(Boolean))];
+  let rows = await eventsOf(pool, keys);
+  if (club) rows = rows.filter(r => evClubs(r.data as never).includes(normPerson(club)));
   for (const row of rows) {
     const copy = JSON.parse(JSON.stringify(row.data)) as MergeEv;
-    const applied = applyNameMerge(copy, names, plan.kept!);
-    if (applied.error) return { status: 409, body: { error: applied.error, code: row.code } };
+    const applied = applyNameMerge(copy, names, kept);
+    if (applied.error) return { error: applied.error, code: row.code };
   }
   const codes = rows.map(r => r.code);
   const c = await pool.connect();
@@ -86,24 +92,34 @@ export async function mergePlayers(pool: Db, names: string[], confirm: boolean, 
       id bigserial primary key, at timestamptz not null default now(), kept text not null, names text[] not null,
       reason text not null, hidden boolean not null default false, events jsonb not null, stats jsonb not null, trophies jsonb not null, icons jsonb not null)`);
     const stats = codes.length ? await c.query('select * from stat_matches where code = any($1::text[])', [codes]) : { rows: [] };
-    const trophies = await c.query('select * from trophies where code = any($1::text[]) or k = any($2::text[])', [codes, plan.keys]);
-    const icons = await c.query('select * from player_icons where k = any($1::text[])', [plan.keys]);
+    const trophies = await c.query('select * from trophies where code = any($1::text[]) or k = any($2::text[])', [codes, keys]);
+    const icons = await c.query('select * from player_icons where k = any($1::text[])', [keys]);
     const hidden = rows.length > 0 && rows.every(r => !!r.data.hidden);
     await c.query('insert into name_merge_backup(kept, names, reason, hidden, events, stats, trophies, icons) values($1,$2,$3,$4,$5,$6,$7,$8)',
-      [plan.kept, names, plan.why, hidden, JSON.stringify(rows.map(r => ({ code: r.code, data: r.data }))), JSON.stringify(stats.rows), JSON.stringify(trophies.rows), JSON.stringify(icons.rows)]);
+      [kept, names, reason, hidden, JSON.stringify(rows.map(r => ({ code: r.code, data: r.data }))), JSON.stringify(stats.rows), JSON.stringify(trophies.rows), JSON.stringify(icons.rows)]);
     for (const row of rows) {
       const data = JSON.parse(JSON.stringify(row.data)) as MergeEv;
-      applyNameMerge(data, names, plan.kept!);
+      applyNameMerge(data, names, kept);
       await c.query('update events set data=$2, version=version+1, updated_at=now() where code=$1', [row.code, JSON.stringify(data)]);
       row.data = data as typeof row.data;
     }
-    const keptKey = normPerson(plan.kept!);
-    for (const k of plan.keys!.filter(key => key !== keptKey)) {
+    const keptKey = normPerson(kept);
+    for (const k of keys.filter(key => key !== keptKey)) {
       await c.query('update player_icons set k=$2, updated_at=now() where k=$1 and not exists (select 1 from player_icons x where x.k=$2)', [k, keptKey]);
       await c.query('delete from player_icons where k=$1 and k <> $2', [k, keptKey]);
     }
     await c.query('commit');
   } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
   for (const row of rows) await sync(row.code, row.data);
-  return { status: 200, body: { ok: true, kept: plan.kept, why: plan.why, events: codes } };
+  return { events: codes };
+}
+
+/** Back up the rows, then rewrite stored games onto one spelling and rebuild their stats. */
+export async function mergePlayers(pool: Db, names: string[], confirm: boolean, sync: (code: string, ev: MergeEv) => Promise<void>) {
+  const plan = await previewMerge(pool, names);
+  if (plan.error) return { status: 400, body: { error: plan.error } };
+  if (!confirm) return { status: 200, body: { preview: true, kept: plan.kept, why: plan.why, events: plan.events } };
+  const r = await rewriteNames(pool, names, plan.kept!, plan.why!, sync);
+  if (r.error) return { status: 409, body: { error: r.error, code: r.code } };
+  return { status: 200, body: { ok: true, kept: plan.kept, why: plan.why, events: r.events } };
 }

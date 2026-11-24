@@ -1,5 +1,5 @@
 // Original pairing engine (no third-party code).
-export interface Player { id: string; name: string; dupr?: number; guest?: boolean; side?: 'home' | 'away'; src?: 'self' | 'host' } // guest: unnamed visitor (kept out of Overall stats). src: 'self' = typed on Join, 'host' = added by the host or imported. Any legacy 'gender' field is ignored.
+export interface Player { id: string; name: string; nick?: string; dupr?: number; guest?: boolean; side?: 'home' | 'away'; src?: 'self' | 'host' } // guest: unnamed visitor (kept out of Overall stats). src: 'self' = typed on Join, 'host' = added by the host or imported. Any legacy 'gender' field is ignored.
 export type Format = 'rotating' | 'mixer' | 'mixed' | 'fixed' | 'kotc' | 'ladder' | 'team' | 'club';
 /** Club vs Club: N fixed 2-player teams per club ('' = empty slot before the start). Home team i stays on court slot i; visitors move one court each round. */
 export interface Club { home: string; away: string; n: number; homeTeams: string[][]; awayTeams: string[][] }
@@ -35,9 +35,12 @@ export function subAt(ev: Pick<EventT, 'subs'>, slot: string, n: number): string
   return cur ? (cur.name?.trim() || null) : null;
 }
 export const isGuest = (name: string) => /^guest$/i.test(name.trim());
+/** What the board shows: the player's nickname for this game when set, else their name. Stats always use `name`. */
+export const shown = (p?: { name?: string; nick?: string } | null) => (p?.nick || '').trim().replace(/\s+/g, ' ').slice(0, 24) || (p?.name || '').trim();
+const shownId = (ev: Pick<EventT, 'players'>, id: string, dflt = '?') => { const p = ev.players.find(x => x.id === id); return p ? shown(p) || dflt : dflt; };
 /** Display name for a slot in a round, e.g. "Guest (for Steve)". */
 export function slotName(ev: Pick<EventT, 'subs' | 'players'>, id: string, n: number) {
-  const orig = ev.players.find(p => p.id === id)?.name || '?'; const s = subAt(ev, id, n); return s ? `${s} (for ${orig})` : orig;
+  const orig = shownId(ev, id); const s = subAt(ev, id, n); return s ? `${s} (for ${orig})` : orig;
 }
 /** Players per fixed unit: Mixed Doubles and Set Partners use organizer-set pairs, Team Battle uses 4s. */
 export const unitSize = (f: Format) => f === 'team' ? 4 : f === 'fixed' || f === 'mixed' ? 2 : 1;
@@ -136,7 +139,7 @@ function isLockedR(r: Round) { return r.matches.some(m => m.sa != null || m.sb !
 export interface Standing { id: string; name: string; w: number; l: number; gp: number; pf: number; pa: number; diff: number; byes: number }
 export function standings(ev: EventT, includePlayoff = false): Standing[] {
   const map = new Map<string, Standing>();
-  for (const p of ev.players) map.set(p.id, { id: p.id, name: p.name, w: 0, l: 0, gp: 0, pf: 0, pa: 0, diff: 0, byes: 0 });
+  for (const p of ev.players) map.set(p.id, { id: p.id, name: shown(p), w: 0, l: 0, gp: 0, pf: 0, pa: 0, diff: 0, byes: 0 });
   for (const r of [...ev.rounds, ...(ev.plan || []).filter(isLockedR)]) { // played-ahead rounds count too
     if (r.playoff && !includePlayoff) continue;
     if (ev.rounds.includes(r)) for (const b of r.byes) { const s = map.get(b); if (s) s.byes++; }
@@ -155,7 +158,7 @@ export function standings(ev: EventT, includePlayoff = false): Standing[] {
 export function teamStandings(ev: EventT) {
   const ind = new Map(standings(ev).map(s => [s.id, s]));
   return ev.teams.map((t, i) => {
-    const r = { id: 'T' + (i + 1), name: t.map(id => ev.players.find(p => p.id === id)?.name || '?').join(' / '), w: 0, l: 0, pf: 0, pa: 0, diff: 0 };
+    const r = { id: 'T' + (i + 1), name: t.map(id => shownId(ev, id)).join(' / '), w: 0, l: 0, pf: 0, pa: 0, diff: 0 };
     for (const rd of ev.rounds) for (const m of rd.matches) if (scored(m) && (m.a.every(p => t.includes(p)) || m.b.every(p => t.includes(p)))) {
       const mine = m.a.every(p => t.includes(p)); const f = mine ? m.sa! : m.sb!, a = mine ? m.sb! : m.sa!; r.pf += f; r.pa += a; r.diff += f - a; if (f > a) r.w++; else r.l++;
     }
@@ -572,7 +575,7 @@ const normName = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCas
 export interface ClubTeamRow { side: 'home' | 'away'; idx: number; label: string; names: string; w: number; l: number; pf: number; pa: number; diff: number }
 /** Per-team W/L/points and club totals (matches won, points). */
 export function clubStandings(ev: EventT) {
-  const c = ev.club!; const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const c = ev.club!; const nm = (id: string) => shownId(ev, id);
   const row = (side: 'home' | 'away', t: string[], i: number): ClubTeamRow => ({ side, idx: i, label: `${side === 'home' ? c.home : c.away} ${i + 1}`, names: t.map(nm).join(' & '), w: 0, l: 0, pf: 0, pa: 0, diff: 0 });
   const home = c.homeTeams.map((t, i) => row('home', t, i)), away = c.awayTeams.map((t, i) => row('away', t, i));
   const key = (t: string[]) => [...t].sort().join('+'); const byKey = new Map([...home.map((r, i) => [key(c.homeTeams[i]), r] as const), ...away.map((r, i) => [key(c.awayTeams[i]), r] as const)]);
@@ -615,7 +618,7 @@ export function pickleCounts(ev: EventT): { id: string; name: string; n: number 
       const orig = ev.players.find(p => p.id === id0);
       if (sn ? isGuest(sn) : (isGuest(orig?.name || '') || !!orig?.guest)) continue;
       const id = sn ? 'sub:' + id0 + ':' + sn.toLowerCase() : id0;
-      const name = sn ? slotName(ev, id0, rn) : (orig?.name || '?');
+      const name = sn ? slotName(ev, id0, rn) : (shown(orig) || '?');
       const e = map.get(id) || { id, name, n: 0 }; e.n++; map.set(id, e);
     }
   }

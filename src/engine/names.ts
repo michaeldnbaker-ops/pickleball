@@ -261,3 +261,57 @@ export function applyNameMerge(ev: MergeEv, from: string[], kept: string): { err
   for (const s of ev.subs || []) if (s.name && keys.has(normPerson(s.name))) s.name = name;
   return {};
 }
+
+// ---- Sign-up matching: who is this typed name? ----
+/** One known player in a club: the name stats use, plus nicknames on file (stored lower-case). */
+export interface Cand { name: string; aliases?: string[]; games?: number }
+export type MatchWhy = AliasWhy | 'nickname on file' | 'last name' | 'first name';
+export interface Match { name: string; why: MatchWhy }
+export const matchText: Record<MatchWhy, string> = { ...whyText, 'nickname on file': 'A name they used before', 'last name': 'Same last name', 'first name': 'Same first name' };
+const rank: Record<MatchWhy, number> = { 'same name': 0, 'nickname on file': 1, nickname: 2, shortened: 3, typo: 4, initial: 5, 'last name': 6, 'first name': 7, 'same initial': 8 };
+const words = (s: string) => comparable(s).split(' ').map(w => w.replace(/[.,]+$/, '')).filter(w => w.length > 1);
+
+/** A one-word name ("Totsy", "Baker", "Drew") against a full name, or first/last swapped ("Drew Totsy" vs "Boston Drew"). */
+function wordReason(typed: string, cand: string): MatchWhy | null {
+  if (clubOf(typed) !== clubOf(cand)) return null;
+  const T = words(typed), C = words(cand);
+  if (!T.length || !C.length) return null;
+  if (T.length === 1 || C.length === 1) {
+    const [one, many] = T.length === 1 ? [T[0], C] : [C[0], T];
+    if (one.length < 3 || many.length < 2) return null;
+    const last = many[many.length - 1];
+    if (one === last) return 'last name';
+    if (one.length >= 5 && editDistance(one, last) === 1) return 'typo';
+    if (one === many[0] || sameNick(one, many[0])) return 'first name';
+    if (many.slice(1).includes(one)) return 'last name';
+    return null;
+  }
+  // Both full names: one's first is the other's last ("Drew Totsy" / "Boston Drew").
+  if (T[0] === C[C.length - 1] || T[T.length - 1] === C[0]) return 'first name';
+  return null;
+}
+
+/**
+ * Sign-up matching. `exact` is the player this name already belongs to (same name, any case or spacing,
+ * or a nickname on file): join as them with no question. Otherwise `suggestions` are the players
+ * to ask about ("Are you Drew Totsy?") before anyone new is created. Different clubs never match.
+ */
+export function matchName(typed: string, cands: Cand[]): { exact?: string; suggestions: Match[] } {
+  const t = normPerson(typed);
+  if (comparable(t).length < 2) return { suggestions: [] };
+  for (const c of cands) if (normPerson(c.name) === t) return { exact: c.name.trim(), suggestions: [] };
+  for (const c of cands) if ((c.aliases || []).some(a => normPerson(a) === t)) return { exact: c.name.trim(), suggestions: [] };
+  const confirmed = keptAlias(typed, cands.map(c => c.name)); if (confirmed) return { exact: confirmed, suggestions: [] };
+  const best = new Map<string, { m: Match; g: number }>();
+  for (const c of cands) {
+    const n = c.name.trim(); if (!n || /^guest$/i.test(n)) continue;
+    let why: MatchWhy | null = comparable(t).length >= 3 ? aliasReason(typed, n) : null;
+    if (!why) for (const a of c.aliases || []) { if (aliasReason(typed, a) || wordReason(typed, a)) { why = 'nickname on file'; break; } }
+    if (!why) why = wordReason(typed, n);
+    if (!why) continue;
+    const k = normPerson(n); const prev = best.get(k);
+    if (!prev || rank[why] < rank[prev.m.why]) best.set(k, { m: { name: n, why }, g: c.games || 0 });
+  }
+  const suggestions = [...best.values()].sort((a, b) => rank[a.m.why] - rank[b.m.why] || b.g - a.g || a.m.name.localeCompare(b.m.name)).slice(0, 4).map(x => x.m);
+  return { suggestions };
+}

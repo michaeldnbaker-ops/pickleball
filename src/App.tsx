@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { nameTaken, removePlayer, capOf, isFull, fitCap, CAPS, normName, canonicalName, joinNames, canEditSetup } from './engine/lobby';
-import { suggestName, whyText, type AliasWhy } from './engine/names';
-import { EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen, appendScoredGame } from './engine/engine';
+import { suggestName, whyText, matchText, type AliasWhy } from './engine/names';
+import { shown, EventT, Round, Format, Player, Match, nextRound, nextPlayoffRound, standings, teamStandings, toCSV, scored, unscoredCourts, courtName, courtLabel, courtsText, courtList, ensurePlan, takeNextRound, newClub, setClubSlot, clubReady, clubStandings, trophyPodium, pickleCounts, rankBoard, slotName, subRound, subAt, resultDependent, isLocked, startEvent, startOk, startBlock, addRounds, endEvent, roundsAllScored, unitSize, addActivePlayer, dropPlayer, rosterOpen, appendScoredGame } from './engine/engine';
 import * as S from './store';
 
 const ICONS: Record<string, string> = {
@@ -233,30 +233,79 @@ function Calendar({ value, onChange }: { value: string; onChange: (d: string) =>
     </div></div>;
 }
 
-function PlayerForm({ onAdd, label = 'Add', autoFocus, big, preset, known }: { onAdd: (p: Player, fromMemory?: boolean) => void | Promise<void>; label?: string; autoFocus?: boolean; big?: boolean; preset?: { name: string; dupr?: number } | null; known?: string[] }) {
+/** Join form identity hooks: check a typed name, change this phone's player's name. */
+interface Ident { check: (name: string) => Promise<S.Resolved | null>; rename?: (to: string) => Promise<string | null>; renameOff?: (to: string) => Promise<string | null>; canRename?: boolean; defaultNick?: string }
+function PlayerForm({ onAdd, label = 'Add', autoFocus, big, preset, known, ident }: { onAdd: (p: Player, fromMemory?: boolean) => void | Promise<void>; label?: string; autoFocus?: boolean; big?: boolean; preset?: { name: string; dupr?: number } | null; known?: string[]; ident?: Ident }) {
   const [name, setName] = useState(preset?.name || ''); const [dupr, setDupr] = useState(preset?.dupr ? String(preset.dupr) : '');
   const [mine, setMine] = useState(!!preset?.name); const [busy, setBusy] = useState(false); const [edited, setEdited] = useState(false);
+  const [ask, setAsk] = useState<{ typed: string; list: { name: string; why: string }[]; players: string[] } | null>(null); const [find, setFind] = useState('');
+  const [renaming, setRenaming] = useState<string | null>(null); const [msg, setMsg] = useState('');
+  const [nick, setNick] = useState(ident?.defaultNick || ''); const [nickAll, setNickAll] = useState(!!ident?.defaultNick);
   const alive = useRef(true); const inputRef = useRef<HTMLInputElement>(null); const [idp] = useState(S.uid);
   useEffect(() => () => { alive.current = false; }, []);
   // Until they type, show the existing spelling of the remembered name (stats / this game / roster).
   const shown = !edited && preset?.name && known ? (canonicalName(preset.name, known) || name) : name;
-  const change = () => { setEdited(true); setMine(false); setName(''); setDupr(''); inputRef.current?.focus(); };
-  const submit = async () => {
-    const n = known ? canonicalName(shown, known) : shown.trim(); if (!n || busy) return; setBusy(true);
-    const fromMemory = mine && !!preset?.name && normName(n) === normName(preset.name);
+  // A phone that joined before: its player's name is shown, not typed. "Not you?" or "Edit my name" to change it.
+  const locked = !!ident && mine && !!shown.trim();
+  const change = () => { setEdited(true); setMine(false); setName(''); setDupr(''); setNick(''); setNickAll(false); setAsk(null); setMsg(''); setRenaming(null); inputRef.current?.focus(); };
+  const finish = async (n: string, fromMemory: boolean, typedNick = '') => {
     const d = Number(dupr);
-    try { await onAdd({ id: S.uid(), name: n, dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined }, fromMemory); }
+    const nk = (nick.trim() || typedNick).replace(/\s+/g, ' ').slice(0, 24);
+    const extra = ident ? { ...(nk && normName(nk) !== normName(n) ? { nick: nk } : {}), nickDefault: nickAll } : {};
+    try { await onAdd({ id: S.uid(), name: n, dupr: dupr && Number.isFinite(d) && d > 0 ? d : undefined, ...extra }, fromMemory); }
     finally { if (alive.current) setBusy(false); }
-    if (!alive.current) return; setEdited(true); setName(''); setDupr(''); setMine(false);
+    if (!alive.current) return; setEdited(true); setName(''); setDupr(''); setMine(false); setAsk(null);
   };
+  const submit = async () => {
+    let n = known ? canonicalName(shown, known) : shown.trim(); if (!n || busy) return; setBusy(true); setMsg('');
+    const fromMemory = mine && !!preset?.name && normName(n) === normName(preset.name);
+    const knownExact = !!known && known.some(k => normName(k) === normName(n));
+    if (ident && !fromMemory && !knownExact) {
+      // Typed name: their name or a nickname on file joins as them. Anything else asks first (close names on top, then everyone in the club,
+      // since a nickname can look nothing like the real name). A new player is made only after "No, I'm new". Nothing is merged here.
+      const r = await ident.check(n); if (!alive.current) return;
+      // Signed up with a nickname on file ("Totsy"): stats go to their name, the board shows what they typed for this game.
+      if (r?.exact) { const typed = n; n = r.exact; if (normName(typed) !== normName(n)) { await finish(n, false, typed); return; } }
+      else if (r && (r.suggestions.length || r.players?.length)) { setAsk({ typed: n, list: r.suggestions, players: (r.players || []).filter(x => !r.suggestions.some(y => normName(y.name) === normName(x))) }); setFind(''); setBusy(false); return; }
+    }
+    await finish(n, fromMemory);
+  };
+  const choose = (n: string) => { if (busy) return; setBusy(true); finish(n, false); };
+  const saveName = async () => {
+    const to = (renaming || '').trim().replace(/\s+/g, ' ').slice(0, 40); if (!to || !ident?.rename || busy) return;
+    if (normName(to) === normName(shown) && to === shown.trim()) { setRenaming(null); return; }
+    setBusy(true); const err = await ident.rename(to); if (!alive.current) return; setBusy(false);
+    if (err) { setMsg(err); return; }
+    setRenaming(null); setName(to); setEdited(true); setMine(true); setMsg('Name changed. Your games and stats moved with it.');
+  };
+  if (ask) return <div className="card pform askYou" role="dialog" aria-label="Is this you?">
+    <h3>{ask.list.length ? 'Is this you?' : 'New here?'}</h3>
+    <p className="muted small">{ask.list.length ? 'We found a player who may be you.' : `No one is signed up as ${ask.typed} yet.`} If you've played before, pick your name so your games and stats stay together.</p>
+    {ask.list.map(x => <button key={x.name} className={'big full youPick' + (ask.list.length === 1 ? ' primary' : '')} disabled={busy} onClick={() => choose(x.name)}>Yes, I'm {x.name}<span className="muted small"> · {(matchText as Record<string, string>)[x.why] || x.why}</span></button>)}
+    {ask.players.length > 0 && <details className="pickList" open={!ask.list.length}><summary>{ask.list.length ? 'Someone else? Find your name' : `Is "${ask.typed}" a nickname? Find your name`}</summary>
+      <input className="nameInput" aria-label="Find your name" placeholder="Search players" value={find} onChange={e => setFind(e.target.value)} />
+      <div className="chips">{ask.players.filter(x => !find.trim() || normName(x).includes(normName(find))).slice(0, 60).map(x => <button key={x} className="chip" disabled={busy} onClick={() => choose(x)}>{x}</button>)}</div></details>}
+    <button className="big full ghost newPick" disabled={busy} onClick={() => choose(ask.typed)}>No, I'm new. Join as {ask.typed}</button>
+    <button type="button" className="ghost small notYou" onClick={() => { setAsk(null); inputRef.current?.focus(); }}>Change what I typed</button>
+  </div>;
   return <div className="card pform">
-    <div className="nameHead"><label htmlFor={idp + '-n'}>Player name</label>
-      {mine && shown.trim() && <button type="button" className="ghost small notYou" onClick={change}>Not you? Change</button>}</div>
-    <input id={idp + '-n'} ref={inputRef} autoFocus={autoFocus && !preset?.name} className="nameInput" placeholder="Full name" autoComplete={preset?.name ? 'off' : 'name'} autoCapitalize="words" maxLength={40} value={shown} onChange={e => { setEdited(true); setName(e.target.value); }} onKeyDown={e => e.key === 'Enter' && submit()} />
-    {(() => { const guess = suggestName(shown, known || []); return guess ? <p className="didYou">Did you mean <button type="button" onClick={() => { setEdited(true); setMine(false); setName(guess); }}>{guess}</button>?</p> : null; })()}
-    <div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
+    <div className="nameHead"><label htmlFor={idp + '-n'}>{renaming !== null ? 'Your new name' : 'Player name'}</label>
+      {mine && shown.trim() && renaming === null && <button type="button" className="ghost small notYou" onClick={change}>Not you? Change</button>}</div>
+    {renaming !== null
+      ? <input id={idp + '-n'} autoFocus className="nameInput" maxLength={40} autoCapitalize="words" value={renaming} onChange={e => setRenaming(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveName()} />
+      : <input id={idp + '-n'} ref={inputRef} autoFocus={autoFocus && !preset?.name} className="nameInput" placeholder="Full name" autoComplete={preset?.name ? 'off' : 'name'} autoCapitalize="words" maxLength={40} value={shown} readOnly={locked} aria-readonly={locked} onChange={e => { setEdited(true); setName(e.target.value); }} onKeyDown={e => e.key === 'Enter' && submit()} />}
+    {locked && renaming === null && ident?.rename && ident.canRename !== false && <button type="button" className="ghost small notYou editMine" onClick={() => { setMsg(''); setRenaming(shown); }}>Edit my name</button>}
+    {renaming !== null && <><p className="muted small">Same player, new name. Your games, stats, and trophies move with it.</p>
+      <div className="row"><button className="primary" disabled={busy || !renaming.trim()} onClick={saveName}>{busy ? 'Saving…' : 'Save name'}</button><button className="ghost" onClick={() => { setRenaming(null); setMsg(''); }}>Cancel</button></div></>}
+    {msg && <p className="didYou" role="status">{msg}</p>}
+    {!ident && (() => { const guess = suggestName(shown, known || []); return guess ? <p className="didYou">Did you mean <button type="button" onClick={() => { setEdited(true); setMine(false); setName(guess); }}>{guess}</button>?</p> : null; })()}
+    {ident && renaming === null && <div className="nickRow"><label htmlFor={idp + '-k'}>Nickname <span className="opt-tag">(optional, shown on the board)</span></label>
+      <input id={idp + '-k'} className="nickInput" placeholder="e.g. Totsy" maxLength={24} autoCapitalize="words" value={nick} onChange={e => setNick(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+      {nick.trim() && <label className="nickAll"><input type="checkbox" checked={nickAll} onChange={e => setNickAll(e.target.checked)} /> Use it every game and in overall stats</label>}
+      <p className="muted small">Your stats stay under your name.</p></div>}
+    {renaming === null && <><div className="duprRow"><label htmlFor={idp + '-d'}>DUPR <span className="opt-tag">(optional)</span></label>
       <input id={idp + '-d'} className="duprInput" placeholder="e.g. 3.75" inputMode="decimal" value={dupr} onChange={e => setDupr(e.target.value.replace(/[^0-9.]/g, '').slice(0, 5))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
-    <button className={'primary full' + (big ? ' big' : '')} disabled={busy || !shown.trim()} onClick={submit}>{label}</button></div>;
+    <button className={'primary full' + (big ? ' big' : '')} disabled={busy || !shown.trim()} onClick={submit}>{label}</button></>}</div>;
 }
 
 function Roster() {
@@ -266,7 +315,7 @@ function Roster() {
   const save = (x: Player[]) => { S.setRoster(x); setR(x); };
   return <div className="page"><Header title="Player Roster" back="" />
     <PlayerForm known={known} onAdd={p => save([...r, { ...p, src: 'host' }])} label="Add player" />
-    {r.sort((a, b) => a.name.localeCompare(b.name)).map(p => <div key={p.id} className="card row between"><span><b>{p.name}</b> <span className="muted">{p.dupr ? 'DUPR ' + p.dupr : ''}</span></span><button className="ghost danger" onClick={() => confirm('Remove ' + p.name + '?') && save(r.filter(x => x.id !== p.id))}>✕</button></div>)}
+    {r.sort((a, b) => a.name.localeCompare(b.name)).map(p => <div key={p.id} className="card row between"><span><b>{shown(p)}</b> <span className="muted">{p.dupr ? 'DUPR ' + p.dupr : ''}</span></span><button className="ghost danger" onClick={() => confirm('Remove ' + p.name + '?') && save(r.filter(x => x.id !== p.id))}>✕</button></div>)}
   </div>;
 }
 
@@ -392,10 +441,10 @@ function EventView({ code, joining }: { code: string; joining?: boolean }) {
   // behind any score already being entered, or it would put the old round back.
   useEffect(() => { if (ev && !loading && ensurePlan(JSON.parse(JSON.stringify(ev)))) act(e => { ensurePlan(e); }); }, [ev, loading, code]);
   if (!ev) return <div className="page"><Header title="Event" back="" />{loading ? <p>Loading…</p> : <p>Event {code} not found{online ? '' : ' (offline)'}.</p>}</div>;
-  const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const nm = (id: string) => shown(ev.players.find(p => p.id === id)) || '?';
   if (!ev.rounds.length) return <Lobby ev={ev} code={code} act={act} refresh={refresh} loading={loading} />;
   const meId = S.getMe(code); const member = !!meId && ev.players.some(p => p.id === meId && ev.active.includes(p.id));
-  const enter = (id: string) => { const p = ev.players.find(x => x.id === id); if (p) S.rememberPlayer(p); S.setMe(code, id); setTab('me'); setWatching(true); };
+  const enter = (id: string) => { const p = ev.players.find(x => x.id === id); if (p) S.claimPlayer(ev, p); S.setMe(code, id); setTab('me'); setWatching(true); };
   if (!member && !S.isOrg(code) && !watching && !ev.finished) {
     if (rosterOpen(ev) && isFull(ev)) return <FullCard ev={ev} onPick={enter} />;
     if (rosterOpen(ev)) return <LateJoin ev={ev} code={code} act={act} onPick={enter} onJoined={enter} />;
@@ -433,7 +482,7 @@ function AddGame({ ev, act }: { ev: EventT; act: Act }) {
   const [a1, setA1] = useState(''); const [a2, setA2] = useState(''); const [b1, setB1] = useState(''); const [b2, setB2] = useState('');
   const [sa, setSa] = useState(''); const [sb, setSb] = useState('');
   const pick = (id: string, set: (v: string) => void) => set(id);
-  const opts = (value: string, set: (v: string) => void, label: string) => <label>{label}<select aria-label={label} value={value} onChange={e => pick(e.target.value, set)}><option value="">Choose</option>{players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>;
+  const opts = (value: string, set: (v: string) => void, label: string) => <label>{label}<select aria-label={label} value={value} onChange={e => pick(e.target.value, set)}><option value="">Choose</option>{players.map(p => <option key={p.id} value={p.id}>{shown(p)}</option>)}</select></label>;
   const save = () => { if (!ready) return; act(e => { appendScoredGame(e, [a1, a2], [b1, b2], Number(sa), Number(sb)); }); setOpen(false); setSa(''); setSb(''); };
   if (!open) return <div className="card" role="region" aria-label="Add a game"><b>Extra game</b><p className="muted small">Four players stayed for another game? Add that score here. It counts in the standings.</p><button className="big primary" onClick={() => setOpen(true)}>Add a game</button></div>;
   const ids = [a1, a2, b1, b2]; const ready = new Set(ids).size === 4 && ids.every(Boolean) && sa !== '' && sb !== '' && sa !== sb;
@@ -458,7 +507,7 @@ function usePullToRefresh(fn: () => void) {
 type Act = (fn: (e: EventT) => void) => Promise<void>;
 /** The player who tapped Start is the host: only they can end the game or add rounds. Older games without a starter fall back to the creator's phone. */
 export function isHost(ev: EventT, code: string) { const me = S.getMe(code); if (!ev.startedBy) return S.isOrg(code); if (ev.startedBy === 'organizer') return S.isOrg(code); return !!me && me === ev.startedBy; }
-const hostName = (ev: EventT) => ev.players.find(p => p.id === ev.startedBy)?.name || 'the host';
+const hostName = (ev: EventT) => shown(ev.players.find(p => p.id === ev.startedBy)) || 'the host';
 function currentRound(ev: EventT) { return ev.rounds[ev.rounds.length - 1]; }
 function roundLabel(ev: EventT, idx: number) { const r = ev.rounds[idx]; if (!r.playoff) return 'Round ' + r.n; const po = ev.rounds.filter(x => x.playoff); const left = po[po.indexOf(r)].matches.length; return left === 1 ? 'Final' : left === 2 ? 'Semifinals' : 'Quarterfinals'; }
 
@@ -556,9 +605,9 @@ function ScoreBox({ v, set, label = 'Score', onDone, last }: { v: number | ''; s
 
 function Me({ ev, code, nm }: { ev: EventT; code: string; nm: (id: string) => string; act?: Act }) {
   const [me, setMeS] = useState(S.getMe(code));
-  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer(ev.players.find(x => x.id === id)); };
+  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.claimPlayer(ev, ev.players.find(x => x.id === id)); };
   if (!me || !ev.players.some(p => p.id === me)) return <div className="card"><h3 className="small muted">Already playing? Tap your name. New players use the game link — they join the next round.</h3>
-    <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip" onClick={() => pick(p.id)}>{p.name}</button>)}</div></div>;
+    <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name)).map(p => <button key={p.id} className="chip" onClick={() => pick(p.id)}>{shown(p)}</button>)}</div></div>;
   const mine = ev.rounds.map((r, i) => ({ r, i, m: r.matches.find(m => m.a.includes(me) || m.b.includes(me)), bye: r.byes.includes(me) }));
   const cur = mine[mine.length - 1];
   const st = standings(ev); const rank = st.findIndex(s => s.id === me);
@@ -623,7 +672,7 @@ function ClubBoard({ ev }: { ev: EventT }) {
     <h3>{c.home} teams</h3>{tbl(s.home)}<h3>{c.away} teams</h3>{tbl(s.away)}<h3>Players</h3></div>;
 }
 function ClubTeams({ ev, act, edit, me }: { ev: EventT; act: Act; edit: boolean; me?: string }) {
-  const c = ev.club!; const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '';
+  const c = ev.club!; const nm = (id: string) => shown(ev.players.find(p => p.id === id));
   const placed = new Set([...c.homeTeams.flat(), ...c.awayTeams.flat()]);
   const free = ev.players.filter(p => ev.active.includes(p.id) && !placed.has(p.id));
   const freeOf = (sd: 'home' | 'away') => free.filter(p => !p.side || p.side === sd);
@@ -666,7 +715,7 @@ function Standings({ ev, me }: { ev: EventT; me?: string }) {
     {ev.club && <ClubBoard ev={ev} />}
     {teams && !ev.club && <><h3>Teams</h3><table><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>+/-</th></tr></thead><tbody>{teamStandings(ev).map((t, i) => <tr key={t.id}><td>{i + 1}</td><td>{t.name}</td><td>{t.w}</td><td>{t.l}</td><td>{t.diff}</td></tr>)}</tbody></table><h3>Players</h3></>}
     <table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>Win%</th><th>GP</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
-      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="gold">🏆</span>}{swIds.has(s.id) && <span className="silverBadge" aria-label="silver">🥈</span>}{pk[s.id] ? <span className="pickleBadge" aria-label={pk[s.id] === 1 ? 'pickle' : pk[s.id] + ' pickles'}>🥒{pk[s.id] > 1 ? ' x' + pk[s.id] : ''}</span> : null}<TrophyBadge n={life(s.name)?.g} /><SilverBadge n={life(s.name)?.s} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp ? Math.round(100 * s.w / s.gp) + '%' : '–'}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
+      <tbody>{st.map((s, i) => <tr key={s.id} className={s.id === me ? 'meRow' : ''}><td>{i + 1}</td><td><Avatar name={ev.players.find(p => p.id === s.id)?.name || s.name} size={22} /> {s.name}{twIds.has(s.id) && <span className="trophyBadge" aria-label="gold">🏆</span>}{swIds.has(s.id) && <span className="silverBadge" aria-label="silver">🥈</span>}{pk[s.id] ? <span className="pickleBadge" aria-label={pk[s.id] === 1 ? 'pickle' : pk[s.id] + ' pickles'}>🥒{pk[s.id] > 1 ? ' x' + pk[s.id] : ''}</span> : null}<TrophyBadge n={life(s.name)?.g} /><SilverBadge n={life(s.name)?.s} />{s.id.startsWith('sub:') ? <span className="wd subTag">sub</span> : !ev.active.includes(s.id) ? <span className="wd">withdrawn</span> : ''}</td><td>{s.w}</td><td>{s.l}</td><td>{s.gp ? Math.round(100 * s.w / s.gp) + '%' : '–'}</td><td>{s.gp}</td><td>{s.pf}</td><td>{s.pa}</td><td>{s.diff > 0 ? '+' : ''}{s.diff}</td></tr>)}</tbody></table>
     <p className="muted small">Ranked by win %, then point differential, then games played. Playoff games not included. Gold and silver use wins, then point differential.</p>
   </div>;
 }
@@ -683,9 +732,9 @@ function Manage({ ev, code, act }: { ev: EventT; code: string; act: Act }) {
     <h2>Players ({ev.active.length} playing)</h2>
     {rosterOpen(ev) && host && <LateRoster ev={ev} act={act} />}
     {rosterOpen(ev) && !host && <><div className="lockNote" role="note"><Icon n="lock" size={18} /> Players can still join with the game link. Only {hostName(ev)} can add or remove someone.</div>
-      <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div></>}
+      <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{shown(p)}</span>)}</div></>}
     {!rosterOpen(ev) && <div className="lockNote" role="note"><Icon n="lock" size={18} /> Roster locked{ev.format === 'club' ? ' for Club vs Club' : ev.rounds.some(r => r.playoff) ? ' once playoffs start' : ''}. The starter can still sub someone in below.</div>}
-    {!rosterOpen(ev) && <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name}</span>)}</div>}
+    {!rosterOpen(ev) && <div className="chips">{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{shown(p)}</span>)}</div>}
     <SubIn ev={ev} act={act} host={host} />
     <h2>Settings</h2>
     <div className="lockNote" role="note"><Icon n="lock" size={18} /> Locked: game started</div>
@@ -710,7 +759,7 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     // Start once: if someone else already started, startEvent is a no-op on the fresh server copy and the API refuses a second draw.
     act(e => { if (e.rounds.length || !(e.club ? clubReady(e.club) && cs.length === e.club.n : startOk(e.active.length, e.format))) return; e.courts = cs.length; e.courtSet = cs; startEvent(e); e.startedAt = stamp; e.startedBy = me || 'organizer'; if (!e.host) e.host = me || 'organizer'; })
       .then(() => { if (S.localEvent(code)?.startedAt === stamp) S.setOrg(code); setStarting(false); refresh(); }); };
-  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) S.rememberPlayer((S.localEvent(code) || ev).players.find(x => x.id === id)); };
+  const pick = (id: string) => { S.setMe(code, id); setMeS(id); if (id) { const e2 = S.localEvent(code) || ev; S.claimPlayer(e2, e2.players.find(x => x.id === id)); } };
   // This phone forgets a name that was removed (by the creator) or dropped elsewhere, so it can join again.
   useEffect(() => { if (me && !loading && !ev.players.some(p => p.id === me)) { S.setMe(code, ''); setMeS(''); } }, [me, loading, ev, code]);
   const joined = ev.players.filter(p => ev.active.includes(p.id));
@@ -747,11 +796,11 @@ function Lobby({ ev, code, act, refresh, loading }: { ev: EventT; code: string; 
     {club && <ClubTeams ev={ev} act={act} edit={org} me={me} />}
     {!me && full && <FullCard ev={ev} onPick={pick} />}
     {!me && !full && <JoinForm ev={ev} onJoin={(p, fromMemory) => { const done = act(e => { if (e.rounds.length || nameTaken(e, p.name) || isFull(e)) return; e.players.push(p); e.active.push(p.id); }); return done.then(() => { const cur = S.localEvent(code); if (cur?.players.some(x => x.id === p.id)) { pick(p.id); return; } const same = fromMemory ? cur?.players.find(x => cur.active.includes(x.id) && normName(x.name) === normName(p.name)) : undefined; if (same) { pick(same.id); return; } if (cur && isFull(cur)) alert('Game is full. All ' + capOf(cur) + ' spots are taken. If someone drops out, a spot opens up.'); else if (cur?.rounds.length) refresh(); else alert('Someone named "' + p.name.trim() + '" is already in this game. If that\'s you, tap your name below; otherwise add a last initial.'); }); }} onPick={pick} />}
-    {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{ev.players.find(p => p.id === me)!.name}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button> <button className="ghost small" onClick={() => setIcFor(ev.players.find(p => p.id === me)!.name)}>Set icon</button></div>}
+    {me && ev.players.some(p => p.id === me) && <div className="card youIn"><Icon n="checkCircle" /> You're in as <b>{shown(ev.players.find(p => p.id === me))}</b> <button className="ghost small" onClick={() => pick('')}>Not you?</button> <button className="ghost small" onClick={() => setIcFor(ev.players.find(p => p.id === me)!.name)}>Set icon</button> <button className="ghost small" onClick={() => { const cur = ev.players.find(p => p.id === me); const v = prompt('Nickname for this game (shown on the board; stats stay under ' + (cur?.name || 'your name') + '). Leave blank for none.', cur?.nick || ''); if (v === null) return; const nk = v.trim().replace(/\s+/g, ' ').slice(0, 24); act(e => { const x = e.players.find(p => p.id === me); if (!x) return; if (nk && normName(nk) !== normName(x.name)) x.nick = nk; else delete x.nick; }); }}>Nickname</button></div>}
     {icFor && <IconEditor name={icFor} onClose={() => setIcFor('')} />}
     {unitSize(ev.format) === 2 && canStart && <PairBuilder ev={ev} act={act} />}
     <h2>Players ({joined.length})</h2>
-    <ul className="lobbyList">{joined.map(p => <li key={p.id} className={'lobbyRow' + (p.id === me ? ' on' : '')}><span className="grow"><Avatar name={p.name} /> {p.name}{p.id === me && <span className="tag">You</span>}</span>
+    <ul className="lobbyList">{joined.map(p => <li key={p.id} className={'lobbyRow' + (p.id === me ? ' on' : '')}><span className="grow"><Avatar name={p.name} /> {shown(p)}{p.id === me && <span className="tag">You</span>}</span>
       {p.id === me ? <button className="ghost small danger dropBtn" onClick={() => drop(p.id, p.name, true)}>Drop out</button>
         : org && <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name, false)}>✕</button>}</li>)}</ul>
     {joined.length === 0 && <p className="muted">No one yet — share the link.</p>}
@@ -803,15 +852,15 @@ function AdminKey({ onChange }: { onChange?: (on: boolean) => void }) {
   return <button className="ghost small adminBtn" onClick={async () => { if (on) { if (confirm('Turn off club admin on this phone?')) { localStorage.removeItem('pb:admin'); set(false); } return; }
     const k = prompt('Club admin key'); if (!k) return; if (await S.checkAdmin(k.trim())) { localStorage.setItem('pb:admin', k.trim()); set(true); } else alert('That key is not valid.'); }}>{on ? 'Club admin: on' : 'Club admin'}</button>;
 }
-function PossibleDupes({ onMerged }: { onMerged: () => void }) {
+function PossibleDupes({ onMerged, club = S.SC }: { onMerged: () => void; club?: string }) {
   const [pairs, setPairs] = useState<S.Dupe[] | null>(null); const [msg, setMsg] = useState('');
   useEffect(() => { S.nameDupes().then(setPairs).catch(() => setPairs([])); }, []);
   if (!pairs?.length) return null;
   const merge = async (d: S.Dupe) => {
-    const plan = await S.mergeNames([d.a, d.b], false);
+    const plan = await S.mergeNames([d.a, d.b], false, club);
     if (plan.error || !plan.kept) { setMsg(plan.error || "Couldn't check those names."); return; }
     if (!confirm(`Merge ${d.a} and ${d.b} into ${plan.kept}?\n\n${plan.why}\n\nGames already played stay under that name.`)) return;
-    const done = await S.mergeNames([d.a, d.b], true);
+    const done = await S.mergeNames([d.a, d.b], true, club);
     if (done.error || !done.ok) { setMsg(done.error || "Couldn't merge those names."); return; }
     setMsg(`Merged into ${done.kept}.`); onMerged(); setPairs(await S.nameDupes());
   };
@@ -819,6 +868,57 @@ function PossibleDupes({ onMerged }: { onMerged: () => void }) {
     <p className="muted small">These names look like the same player in one club. A name with no tag is Stone Creek. (FC) is Franco's and is never paired with Stone Creek. Merge keeps the name they entered on Join. Nothing changes until you confirm.</p>
     {pairs.map(d => <div key={d.a + '\n' + d.b} className="dupeRow"><span className="grow"><b>{d.a}</b> and <b>{d.b}</b> <span className="muted small">{whyText[d.why as AliasWhy] || d.why}. Will keep {d.kept}.</span></span>
       <button className="primary" onClick={() => merge(d)}>Merge</button></div>)}
+    {msg && <p role="status">{msg}</p>}</div>;
+}
+/** Club admin: merge any two players (stats combined, history kept, old spelling becomes a nickname), add or remove nicknames, rename a player. One club at a time. */
+function PlayerTools({ club, names, onChanged }: { club: string; names: string[]; onChanged: () => void }) {
+  const sorted = useMemo(() => [...new Set(names)].sort((a, b) => a.localeCompare(b)), [names]);
+  const [a, setA] = useState(''); const [b, setB] = useState(''); const [who, setWho] = useState(''); const [nick, setNick] = useState(''); const [to, setTo] = useState('');
+  const [people, setPeople] = useState<{ name: string; aliases: string[]; nick?: string | null }[]>([]); const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
+  const reload = useCallback(() => { S.listPeople(club).then(setPeople).catch(() => {}); }, [club]);
+  useEffect(() => { reload(); }, [reload]);
+  const nicks = people.find(p => normName(p.name) === normName(who))?.aliases || [];
+  const shownNick = people.find(p => normName(p.name) === normName(who))?.nick || ''; const [dn, setDn] = useState('');
+  const run = async (f: () => Promise<string>) => { if (busy) return; setBusy(true); try { setMsg(await f()); } finally { setBusy(false); } reload(); onChanged(); };
+  const merge = () => run(async () => {
+    const plan = await S.mergeNames([a, b], false, club);
+    if (plan.error || !plan.kept) return plan.error === 'different club' ? 'Those two are in different clubs.' : plan.error || "Couldn't check those names.";
+    if (!confirm(`Merge ${a} and ${b} into ${plan.kept}?\n\nTheir games and stats are combined. Nothing is deleted, and the other spelling becomes a nickname.`)) return '';
+    const done = await S.mergeNames([a, b], true, club);
+    if (done.error || !done.ok) return done.error === 'played together' ? `${a} and ${b} played in the same match, so they're two people.` : done.error || "Couldn't merge.";
+    setA(''); setB(''); return `Merged into ${done.kept}.`;
+  });
+  const addNick = (remove?: string) => run(async () => {
+    const r = await S.setPlayerAlias(club, who, remove || nick, !!remove);
+    if (r.error === 'is a player') return `${r.name} is a player with their own stats. Use Merge instead.`;
+    if (r.error === 'used by') return `That nickname is already ${r.name}'s.`;
+    if (r.error) return "Couldn't save the nickname.";
+    setNick(''); return remove ? `Removed "${remove}".` : `Saved. Signing up as "${nick.trim()}" now joins as ${r.name}.`;
+  });
+  const rename = () => run(async () => {
+    const r = await S.renamePlayer(club, to, who);
+    if (r.error === 'taken') return `${r.name} is already a player. Use Merge instead.`;
+    if (r.error === 'live game') return `${who} is in a game being played right now. Rename after it ends.`;
+    if (r.error) return "Couldn't rename.";
+    const old = who; setWho(r.name || to); setTo(''); return `Renamed ${old} to ${r.name}. "${old}" stays as a nickname.`;
+  });
+  return <div className="card playerTools"><h2>Players and nicknames</h2>
+    <p className="muted small">{club}. A phone that joined before always signs up as its player. Nicknames turn into the player's name when someone signs up with them.</p>
+    <h3>Merge two players</h3>
+    <select aria-label="First player" value={a} onChange={e => setA(e.target.value)}><option value="">Pick a player</option>{sorted.map(n => <option key={n}>{n}</option>)}</select>
+    <select aria-label="Second player" value={b} onChange={e => setB(e.target.value)}><option value="">Pick the duplicate</option>{sorted.filter(n => n !== a).map(n => <option key={n}>{n}</option>)}</select>
+    <button className="primary" disabled={busy || !a || !b || a === b} onClick={merge}>Merge</button>
+    <h3>Nicknames</h3>
+    <select aria-label="Player" value={who} onChange={e => { setWho(e.target.value); setMsg(''); }}><option value="">Pick a player</option>{sorted.map(n => <option key={n}>{n}</option>)}</select>
+    {who && <>
+      <div className="aliasRow">{nicks.length ? nicks.map(x => <span key={x} className="chip static">{x} <button className="ghost small danger" aria-label={'Remove nickname ' + x} onClick={() => addNick(x)}>✕</button></span>) : <span className="muted small">No nicknames yet.</span>}</div>
+      <input aria-label="New nickname" placeholder="Nickname, e.g. Totsy" maxLength={40} value={nick} onChange={e => setNick(e.target.value)} onKeyDown={e => e.key === 'Enter' && nick.trim() && addNick()} />
+      <button className="primary" disabled={busy || !nick.trim()} onClick={() => addNick()}>Add nickname</button>
+      <p className="muted small">Board name: <b>{shownNick || who}</b>{shownNick ? ` (stats stay under ${who})` : ''}</p>
+      <input aria-label="Board nickname" placeholder="Board nickname (blank = real name)" maxLength={24} value={dn} onChange={e => setDn(e.target.value)} />
+      <button disabled={busy} onClick={() => run(async () => { const r = await S.setNickname(club, dn, who); if (r.error === 'taken') return `${r.name} already uses that name.`; if (r.error) return "Couldn't save."; setDn(''); return r.nick ? `${who} now shows as ${r.nick}. Stats stay under ${who}.` : `${who} shows by name again.`; })}>Save board nickname</button>
+      <input aria-label="Rename player" placeholder={'Rename ' + who} maxLength={40} value={to} onChange={e => setTo(e.target.value)} />
+      <button disabled={busy || !to.trim()} onClick={rename}>Rename everywhere</button></>}
     {msg && <p role="status">{msg}</p>}</div>;
 }
 function CountMark({ kind, n }: { kind: 'gold' | 'silver' | 'pickle'; n: number }) {
@@ -869,7 +969,7 @@ function LeaderList({ rows, mode }: { rows: S.Stat[]; mode: 'players' | 'trophie
       const pct = b.games ? Math.round(100 * b.wins / b.games) + '%' : '–';
       return <li key={b.k} className="lbSlot"><button type="button" className="lbRow" onClick={() => go('stats/' + encodeURIComponent(b.k))}>
         <span className="lbRank">{i + 1}</span>
-        <FitName name={b.name} />
+        <FitName name={b.nick ? (S.adminKey() ? `${b.nick} (${b.name})` : b.nick) : b.name} />
         {players && <span className="lbWl" aria-label={b.wins + ' wins, ' + b.losses + ' losses'}>{b.wins}-{b.losses}</span>}
         {players && <span className="lbPct">{pct}</span>}
         {players && <span className="lbGp" aria-label={b.games + ' games played'}>{b.games}</span>}
@@ -889,7 +989,7 @@ function Stats({ name }: { name?: string }) {
   const picker = <ClubSelect id="stats-club" label="Club" value={club} onChange={setClub} />;
   const [tab, setTab] = useState<'players' | 'trophies'>('players');
   if (name) { const k = name.toLowerCase(); const st = board?.find(b => b.k === k);
-    return <div className="page"><Header title={st?.name || name} back="stats" />
+    return <div className="page"><Header title={st?.nick || st?.name || name} back="stats" />{st?.nick && <p className="muted small realName">Stats under {st.name}</p>}
       <div className="row playerHead"><Avatar name={st?.name || name} size={64} /><TrophyBadge n={tro.filter(t => t.place !== 'silver').length} big /><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /><PickleBadge n={st?.pickles} big /><button className="ghost small" onClick={() => setEditIc(true)}>Change icon</button></div>
       {picker}
       <div className="card trophyCase" aria-label="Trophy case"><div className="row between"><h2>Trophy case</h2><span className="row" style={{ gap: '.35rem' }}><span className="trophyCount big">🏆 x{tro.filter(t => t.place !== 'silver').length}</span><SilverBadge n={tro.filter(t => t.place === 'silver').length} big /></span></div>
@@ -913,7 +1013,8 @@ function Stats({ name }: { name?: string }) {
     {board && board.length > 0 && tab === 'players' && <LeaderList rows={board} mode="players" />}
     {board && board.length > 0 && tab === 'players' && <p className="muted small">Ranked by win %, then point differential, then games played.</p>}
     <p className="muted small">Completed matches only (in-progress matches count once their host ends them). Matched by name, not case-sensitive.</p>
-    {admin && <PossibleDupes onMerged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}
+    {admin && <PossibleDupes club={club} onMerged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}
+    {admin && board && <PlayerTools club={club} names={board.map(b => b.name)} onChanged={() => { S.statsBoard(club).then(b => setBoard(rankBoard(b))).catch(() => {}); }} />}
     <AdminKey onChange={setAdmin} />
   </div>;
 }
@@ -921,7 +1022,7 @@ function Stats({ name }: { name?: string }) {
 /** Organizer sets the pairs (Mixed Doubles / Set Partners): tap two players to pair them. Unpaired players are auto-paired at start. */
 function PairBuilder({ ev, act }: { ev: EventT; act: Act }) {
   const [first, setFirst] = useState('');
-  const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const nm = (id: string) => shown(ev.players.find(p => p.id === id)) || '?';
   const pairs = (ev.teams || []).filter(t => t.length === 2 && t.every(p => ev.active.includes(p)));
   const paired = new Set(pairs.flat()); const free = ev.players.filter(p => ev.active.includes(p.id) && !paired.has(p.id));
   const tap = (id: string) => { if (!first) return setFirst(id); if (first === id) return setFirst(''); const a = first; setFirst(''); act(e => { e.teams = [...(e.teams || []).filter(t => !t.includes(a) && !t.includes(id)), [a, id]]; }); };
@@ -929,7 +1030,7 @@ function PairBuilder({ ev, act }: { ev: EventT; act: Act }) {
     <p className="muted small">{first ? `Now tap ${nm(first)}'s partner.` : 'Tap two players to pair them. Anyone left unpaired is paired automatically when the game starts.'}</p>
     {pairs.map((t, i) => <div key={t.join()} className="pairRow"><span className="pairNo">{i + 1}</span><span className="grow pairNames">{nm(t[0])} &amp; {nm(t[1])}</span>
       <button className="ghost small" aria-label={'Unpair ' + nm(t[0]) + ' and ' + nm(t[1])} onClick={() => act(e => { e.teams = (e.teams || []).filter(x => x.join() !== t.join()); })}>✕</button></div>)}
-    {free.length > 0 && <div className="chips">{free.map(p => <button key={p.id} className={'chip ' + (first === p.id ? 'on' : '')} onClick={() => tap(p.id)}>{p.name}</button>)}</div>}
+    {free.length > 0 && <div className="chips">{free.map(p => <button key={p.id} className={'chip ' + (first === p.id ? 'on' : '')} onClick={() => tap(p.id)}>{shown(p)}</button>)}</div>}
   </div>;
 }
 
@@ -986,7 +1087,7 @@ function LateRoster({ ev, act }: { ev: EventT; act: Act }) {
     <div className="row"><input id="late-name" value={name} maxLength={40} placeholder="Full name" onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
       <button className="primary" disabled={!name.trim() || isFull(ev)} onClick={add}>Add player</button></div>
     {guess && <p className="didYou">Did you mean <button type="button" onClick={() => setName(guess)}>{guess}</button>?</p>}
-    <div className="chips" style={{ marginTop: 8 }}>{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{p.name} <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name)}>✕</button></span>)}</div>
+    <div className="chips" style={{ marginTop: 8 }}>{ev.players.filter(p => ev.active.includes(p.id)).map(p => <span key={p.id} className="chip static">{shown(p)} <button className="ghost small danger" aria-label={'Remove ' + p.name} onClick={() => drop(p.id, p.name)}>✕</button></span>)}</div>
   </div>;
 }
 function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: string) => void }) {
@@ -996,13 +1097,13 @@ function Started({ ev, code, onPick }: { ev: EventT; code: string; onPick: (id: 
       <p className="muted">{ev.name} is underway ({code}), so no one new can be added.</p>
       <button className="big primary" onClick={() => go('join')}>Find another game</button></div>
     {joined.length > 0 && <div className="card"><h3 className="small muted">Already playing? Tap your name</h3>
-      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></div>}
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{shown(p)}</button>)}</div></div>}
   </div>;
 }
 
-/** Shared-link landing: name remembered on this phone (pre-filled, one tap). "Not you? Change" for a shared phone. */
+/** Shared-link landing: this phone's player (linked on the server, else the name remembered here) is pre-filled for a one-tap Join. "Not you? Change" for a shared phone. */
 function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player, fromMemory?: boolean) => void | Promise<void>; onPick: (id: string) => void }) {
-  const [who] = useState(() => S.getWho());
+  const [who, setWhoS] = useState<S.Who | null>(() => S.getWho());
   const [known, setKnown] = useState<string[]>([]);
   const knownRef = useRef<string[]>([]); const pending = useRef<Promise<void>>(Promise.resolve());
   const joined = ev.players.filter(p => ev.active.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
@@ -1010,6 +1111,23 @@ function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player, from
   const c = ev.format === 'club' ? ev.club : undefined;
   const clubs = c ? [c.home, c.away || ''] : [ev.clubName || S.SC];
   const clubKey = clubs.join('\n');
+  // The club this sign-up counts for: players are per club.
+  const myClub = c ? (side === 'away' ? c.away : c.home) : (ev.clubName || S.SC);
+  const [ready, setReady] = useState(false); const [owner, setOwner] = useState(true); const [dNick, setDNick] = useState('');
+  useEffect(() => {
+    let stop = false; setReady(false);
+    const saved = S.getWho();
+    const t = setTimeout(() => { if (!stop) setReady(true); }, 2500);
+    (async () => {
+      const r = await S.resolvePlayer(myClub, saved?.name);
+      if (stop) return;
+      const name = r?.me?.name || r?.exact || saved?.name;
+      if (name) setWhoS({ name, ...(saved?.dupr ? { dupr: saved.dupr } : {}) }); else setWhoS(null);
+      setOwner(r?.me ? r.me.owner : true); setDNick(r?.me?.nick || '');
+      setReady(true);
+    })().catch(() => { if (!stop) setReady(true); });
+    return () => { stop = true; clearTimeout(t); };
+  }, [myClub]);
   useEffect(() => {
     let stop = false;
     const list = clubKey ? clubKey.split('\n') : [S.SC];
@@ -1028,13 +1146,32 @@ function JoinForm({ ev, onJoin, onPick }: { ev: EventT; onJoin: (p: Player, from
     const hit = await Promise.race([S.lookupName(p.name, clubs), new Promise<null>(r => setTimeout(() => r(null), 8000))]);
     const list = joinNames(hit ? [hit, ...knownRef.current] : knownRef.current, cur.players.filter(x => cur.active.includes(x.id)).map(x => x.name), S.getRoster().map(x => x.name));
     const n = canonicalName(p.name, list);
-    await onJoin({ ...p, name: n, src: 'self' }, !!(fromMemory && normName(n) === normName(p.name)));
+    const { nickDefault, ...pp } = p as Player & { nickDefault?: boolean };
+    await onJoin({ ...pp, name: n, src: 'self' }, !!(fromMemory && normName(n) === normName(p.name)));
+    // Joined: this phone is that player from now on (the server may have turned a nickname into their name).
+    const after = S.localEvent(ev.id); const me = after?.players.find(x => x.id === p.id && after.active.includes(x.id)) || after?.players.find(x => after.active.includes(x.id) && normName(x.name) === normName(n));
+    if (me) { await S.linkPlayer(myClub, me.name); if (nickDefault && p.nick && p.nick !== dNick) S.setNickname(myClub, p.nick); }
+  };
+  const ident: Ident = {
+    check: name => S.resolvePlayer(myClub, name),
+    canRename: owner, defaultNick: dNick,
+    renameOff: async to => {
+      let r = await S.renamePlayer(myClub, to);
+      if (r.error === 'not linked' && who?.name) { await S.linkPlayer(myClub, who.name); r = await S.renamePlayer(myClub, to); }
+      if (!r.error) { setWhoS({ name: r.name || to, ...(who?.dupr ? { dupr: who.dupr } : {}) }); return null; }
+      if (r.error === 'taken') return `${r.name || to} is already another player. If that's you, ask the club admin to merge you.`;
+      if (r.error === 'live game') return "You're in a game being played right now. Change your name after it ends.";
+      if (r.error === 'not owner') return `Only the phone that first joined as ${who?.name || 'you'}, or the club admin, can change this name.`;
+      if (r.error === 'offline') return "Couldn't reach the server. Try again.";
+      return "Couldn't change the name. Try again.";
+    },
   };
   return <div className="joinForm"><h2>Add yourself to this game</h2>
     {c && <div className="row joinSide" role="radiogroup" aria-label="Your club">{(['home', 'away'] as const).map(sd => <button key={sd} type="button" role="radio" aria-checked={side === sd} className={'big chip ' + (side === sd ? 'on primary' : '')} onClick={() => setSide(sd)}>Join as {sd === 'home' ? c.home : c.away}</button>)}</div>}
-    {c && !side ? <p className="muted small">Pick your club first.</p> : <PlayerForm autoFocus big preset={who} known={names} label={c ? 'Join as ' + (side === 'home' ? c.home : c.away) : 'Join'} onAdd={(p, fromMemory) => add(c && side ? { ...p, side } : p, fromMemory)} />}
+    {c && !side ? <p className="muted small">Pick your club first.</p> : !ready ? <div className="card pform"><p className="muted">Loading…</p></div>
+      : <PlayerForm key={myClub + '\n' + (who?.name || '')} autoFocus big preset={who} known={names} ident={ident} label={c ? 'Join as ' + (side === 'home' ? c.home : c.away) : 'Join'} onAdd={(p, fromMemory) => add(c && side ? { ...p, side } : p, fromMemory)} />}
     {joined.length > 0 && <><h3 className="small muted">Already joined? Tap your name</h3>
-      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{shown(p)}</button>)}</div></>}
   </div>;
 }
 
@@ -1045,7 +1182,7 @@ function FullCard({ ev, onPick }: { ev: EventT; onPick: (id: string) => void }) 
     <p className="muted">All {capOf(ev)} spots are taken. If someone drops out, a spot opens up.</p>
     <button className="big" onClick={() => go('join')}>Find another game</button>
     {joined.length > 0 && <><h3 className="small muted">Already playing? Tap your name</h3>
-      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{p.name}</button>)}</div></>}
+      <div className="chips">{joined.map(p => <button key={p.id} className="chip" onClick={() => onPick(p.id)}>{shown(p)}</button>)}</div></>}
   </div>;
 }
 
@@ -1053,7 +1190,7 @@ function FullCard({ ev, onPick }: { ev: EventT; onPick: (id: string) => void }) 
 function SubIn({ ev, act, host }: { ev: EventT; act: Act; host: boolean }) {
   const [who, setWho] = useState(''); const reg = ev.rounds.filter(r => !r.playoff).length;
   const [from, setFrom] = useState(Math.max(1, reg)); const [name, setName] = useState(''); const [back, setBack] = useState(false);
-  const nm = (id: string) => ev.players.find(p => p.id === id)?.name || '?';
+  const nm = (id: string) => shown(ev.players.find(p => p.id === id)) || '?';
   const subs = [...(ev.subs || [])].sort((a, b) => nm(a.slot).localeCompare(nm(b.slot)) || a.from - b.from);
   const open = (id: string, isBack: boolean) => { setWho(id); setBack(isBack); setName(''); setFrom(Math.max(1, reg)); };
   const save = () => { const id = who, f = from, n = back ? null : (name.trim() || 'Guest'); setWho('');

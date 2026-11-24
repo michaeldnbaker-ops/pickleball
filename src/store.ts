@@ -131,7 +131,7 @@ export async function listEvents(): Promise<Listed[]> {
 }
 export const testMode = () => LS.getItem('pb:hidden') === '1';
 
-export interface Stat { k: string; name: string; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number; silver?: number; pickles?: number }
+export interface Stat { k: string; name: string; nick?: string | null; games: number; wins: number; losses: number; pf: number; pa: number; diff: number; events: number; trophies?: number; silver?: number; pickles?: number }
 export interface StatMatch { id: string; code: string; ev_name: string; date: string; an: string[]; bn: string[]; sa: number; sb: number }
 const q = () => (testMode() ? '&test=1' : '');
 export async function statsBoard(club = SC): Promise<Stat[]> { const r = await fetch(`${API}/stats?x=1${q()}&club=${encodeURIComponent(club)}`, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).players; }
@@ -186,8 +186,8 @@ export async function nameDupes(): Promise<Dupe[]> {
   const r = await fetch(`${API}/stats/dupes?x=1${q()}`, { headers: ah(), cache: 'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).pairs || [];
 }
-export async function mergeNames(names: string[], confirm: boolean): Promise<{ ok?: boolean; kept?: string; why?: string; error?: string }> {
-  const r = await fetch(`${API}/stats/merge?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ names, confirm }) });
+export async function mergeNames(names: string[], confirm: boolean, club = SC): Promise<{ ok?: boolean; kept?: string; why?: string; error?: string }> {
+  const r = await fetch(`${API}/stats/merge?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ names, confirm, club }) });
   const b = await r.json().catch(() => ({})); if (!r.ok) return { error: b.error || 'merge failed' }; return b;
 }
 
@@ -242,4 +242,44 @@ export async function updatePast(code: string, g: PastGame) {
 export async function deletePast(code: string) {
   const r = await fetch(`${API}/past-game/${code}?x=1${q()}`, { method: 'DELETE', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify({ token: LS.getItem('pb:pastTok:' + code) || undefined }) });
   if (!r.ok && r.status !== 404) throw await pastErr(r); LS.removeItem('pb:pastTok:' + code); LS.removeItem('pb:ev:' + code); LS.removeItem('pb:dirty:' + code);
+}
+
+// ---- Player identity: this phone is one player per club, and nicknames on file resolve to that player. ----
+/** A secret for this phone (never shown). The server keeps only a hash. */
+export function deviceId(): string {
+  let d = LS.getItem('pb:dev');
+  if (!d || !/^[a-f0-9]{32,64}$/.test(d)) { d = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join(''); LS.setItem('pb:dev', d); }
+  return d;
+}
+export interface Resolved { me?: { name: string; owner: boolean; nick?: string }; exact?: string; suggestions: { name: string; why: string }[]; players?: string[] }
+const post = (path: string, body: unknown) => fetch(`${API}${path}?x=1${q()}`, { method: 'POST', headers: { 'content-type': 'application/json', ...ah() }, body: JSON.stringify(body) });
+/** Who this phone is in the club, and who a typed name belongs to. Null when offline (join still works). */
+export async function resolvePlayer(club: string, name?: string): Promise<Resolved | null> {
+  try { const r = await Promise.race([post('/people/resolve', { club: club || SC, name, device: deviceId() }), new Promise<null>(res => setTimeout(() => res(null), 6000))]); if (!r || !r.ok) return null; return await r.json(); } catch { return null; }
+}
+/** After a join or "tap your name": this phone is that player from now on. */
+export async function linkPlayer(club: string, name: string) {
+  try { const r = await post('/people/link', { club: club || SC, name, device: deviceId() }); if (r.ok) { const b = await r.json(); if (b.name) setWho({ name: b.name, dupr: readWho()?.dupr }); return b.name as string; } } catch { /* offline */ }
+  return null;
+}
+/** Change this phone's player's name everywhere. Errors: taken (name), live game, not owner, not linked. */
+export async function renamePlayer(club: string, to: string, from?: string): Promise<{ ok?: boolean; name?: string; error?: string }> {
+  try { const r = await post('/people/rename', { club: club || SC, to, from, device: deviceId() }); const b = await r.json().catch(() => ({})); if (r.ok && b.name && !from) setWho({ name: b.name, dupr: readWho()?.dupr }); return r.ok ? b : { error: b.error || 'error', name: b.name }; } catch { return { error: 'offline' }; }
+}
+export async function listPeople(club: string): Promise<{ name: string; aliases: string[] }[]> {
+  const r = await fetch(`${API}/people?x=1${q()}&club=${encodeURIComponent(club || SC)}`, { headers: ah(), cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return (await r.json()).people || [];
+}
+export async function setPlayerAlias(club: string, name: string, alias: string, remove = false): Promise<{ ok?: boolean; aliases?: string[]; error?: string; name?: string }> {
+  const r = await post('/people/alias', { club: club || SC, name, alias, remove }); const b = await r.json().catch(() => ({})); return r.ok ? b : { error: b.error || 'error', name: b.name };
+}
+/** The club a player in this game counts for (their side in Club vs Club). */
+export const playerClub = (ev: EventT, p?: { side?: string } | null) => (ev.format === 'club' && ev.club ? (p?.side === 'away' ? ev.club.away : ev.club.home) : ev.clubName) || SC;
+/** "Tap your name" / joined: remember the player here and link this phone to them (not for guests). */
+export function claimPlayer(ev: EventT, p?: Player | null) {
+  if (!p?.name || p.guest || /^guest$/i.test(p.name.trim())) return;
+  rememberPlayer(p); linkPlayer(playerClub(ev, p), p.name);
+}
+/** Default nickname for this phone's player (admin: any player by name). Blank clears it. */
+export async function setNickname(club: string, nick: string, name?: string): Promise<{ ok?: boolean; nick?: string | null; error?: string; name?: string }> {
+  try { const r = await post('/people/nick', { club: club || SC, nick, name, device: deviceId() }); const b = await r.json().catch(() => ({})); return r.ok ? b : { error: b.error || 'error', name: b.name }; } catch { return { error: 'offline' }; }
 }

@@ -5,6 +5,7 @@ import { buildPast } from './past';
 import { shouldNotify, noteFor, endpointOk, vapidPublic, notifySubs } from './push';
 import { rosterWrite } from './roster';
 import { listDupes, mergePlayers } from './merge';
+import { PEOPLE_SQL, resolve as resolvePerson, link as linkPerson, rename as renamePerson, setAlias, afterMerge, canonNewPlayers, peopleIn, setNick, cleanNick } from './people';
 import { isScoreAppend } from '../src/engine/engine';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 pool.on('error', () => {});
@@ -28,7 +29,8 @@ const ensureStats = () => ready ??= pool.query(`create table if not exists stat_
   create table if not exists push_vapid(id int primary key, public_key text not null, private_key text not null);
   create table if not exists push_inbox(id text primary key, body bytea not null, headers text not null, created_at timestamptz not null default now());
   alter table push_subs add column if not exists last_status int;
-  alter table push_subs add column if not exists last_at timestamptz;`).catch(e => { ready = null; throw e; });
+  alter table push_subs add column if not exists last_at timestamptz;
+  ${PEOPLE_SQL}`).catch(e => { ready = null; throw e; });
 
 interface M { court: number; a: string[]; b: string[]; sa?: number; sb?: number }
 interface R { n: number; matches: M[]; playoff?: boolean }
@@ -175,7 +177,8 @@ export default {
           sum(pf)::int pf, sum(pa)::int pa, sum(pf-pa)::int diff, count(distinct code)::int events,
           (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1) and lower(coalesce(t.club,'Stone Creek')) = $2 and coalesce(t.place,'gold') = 'gold') trophies,
           (select count(*)::int from trophies t where t.k = p.k and (t.hidden = false or $1) and lower(coalesce(t.club,'Stone Creek')) = $2 and t.place = 'silver') silver,
-          sum((pf = 0 and pa > 0)::int)::int pickles from p group by k order by wins desc, diff desc, games desc limit ${test ? 3000 : 500}`, [test, club]); // test mode: hidden e2e players pile up
+          sum((pf = 0 and pa > 0)::int)::int pickles,
+          (select nullif(pp.nick,'') from people pp where pp.club = $2 and lower(pp.name) = p.k and (pp.hidden = false or $1) limit 1) nick from p group by k order by wins desc, diff desc, games desc limit ${test ? 3000 : 500}`, [test, club]); // test mode: hidden e2e players pile up
         return j({ players: rows });
       }
       if (url.pathname === '/stats/player' && req.method === 'GET') {
@@ -194,7 +197,21 @@ export default {
         const b = await req.json().catch(() => ({})) as { names?: unknown; confirm?: boolean };
         const names = Array.isArray(b.names) ? b.names.filter((n): n is string => typeof n === 'string') : [];
         const r = await mergePlayers(pool, names, !!b.confirm, syncStats);
+        // Every merged spelling becomes a nickname of the kept player, so the next sign-up with it lands on them.
+        if (b.confirm && r.status === 200 && (r.body as { ok?: boolean }).ok) { try { (r.body as Record<string, unknown>).aliases = (await afterMerge(pool, typeof (b as { club?: unknown }).club === 'string' ? (b as { club: string }).club : SC, (r.body as { kept: string }).kept, names, test)).aliases; } catch { /* merge itself is done */ } }
         return j(r.body, r.status);
+      }
+      if (url.pathname.startsWith('/people')) {
+        // Player identity: which player this phone is, nicknames on file, and renames. See server/people.ts.
+        await ensureStats(); const b = req.method === 'POST' ? await req.json().catch(() => ({})) as Record<string, unknown> : {};
+        if (url.pathname === '/people/resolve' && req.method === 'POST') return j(await resolvePerson(pool, b, test));
+        if (url.pathname === '/people/link' && req.method === 'POST') { const r = await linkPerson(pool, b, test); return j(r.body, r.status); }
+        if (url.pathname === '/people/nick' && req.method === 'POST') { const r = await setNick(pool, b, await isAdmin(req), test); return j(r.body, r.status); }
+        if (url.pathname === '/people/rename' && req.method === 'POST') { const r = await renamePerson(pool, b, await isAdmin(req), test, syncStats as never); return j(r.body, r.status); }
+        if (!(await isAdmin(req))) return j({ error: 'admin only' }, 403);
+        if (url.pathname === '/people' && req.method === 'GET') return j({ people: (await peopleIn(pool, url.searchParams.get('club') || SC, test)).map(p => ({ name: p.name, aliases: p.aliases, nick: p.nick || null })) });
+        if (url.pathname === '/people/alias' && req.method === 'POST') { const r = await setAlias(pool, b, test); return j(r.body, r.status); }
+        return j({ error: 'method' }, 405);
       }
       if (url.pathname === '/clubs' && req.method === 'GET') {
         await ensureStats(); const { rows } = await pool.query('select name from clubs where hidden=false or $1 order by lower(name)', [test]);
@@ -250,6 +267,8 @@ export default {
           n.push = (await c.query('delete from push_subs where test = true')).rowCount || 0;
           n.inbox = (await c.query('delete from push_inbox')).rowCount || 0;
           const bak = await c.query("select to_regclass('public.name_merge_backup') as t");
+          n.people = (await c.query('delete from people where hidden = true')).rowCount || 0;
+          n.devices = (await c.query('delete from person_devices where hidden = true')).rowCount || 0;
           n.backups = bak.rows[0]?.t ? ((await c.query('delete from name_merge_backup where hidden = true')).rowCount || 0) : 0;
           await c.query('commit');
         } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
@@ -331,6 +350,10 @@ export default {
         const text = await req.text(); if (text.length > 1_000_000) return j({ error: 'too large' }, 413);
         const body = JSON.parse(text);
         const cur = (await pool.query('select data from events where code=$1', [code])).rows[0]?.data as Ev | undefined;
+        // Nicknames are display only (max 24 chars); stats always use the player's name.
+        if (body?.data && Array.isArray(body.data.players)) for (const p of body.data.players) if (p && typeof p === 'object' && 'nick' in p) { const n = cleanNick(p.nick); if (n && n.toLowerCase() !== String(p.name || '').trim().toLowerCase()) p.nick = n; else delete p.nick; }
+        // A new sign-up typed as a nickname on file ("Totsy") joins as that player. Never blocks a save.
+        if (body?.data && Array.isArray(body.data.players) && !cur?.finished) { try { await ensureStats(); await canonNewPlayers(pool, cur, body.data, side => side === 'away' && body.data.format === 'club' && body.data.club?.away?.trim() ? body.data.club.away : clubOf(body.data), !!body.data.hidden || test); } catch { /* keep the typed name */ } }
         const by = url.searchParams.get('by') || '';
         const orgQ = url.searchParams.get('org') === '1';
         const admin = await isAdmin(req);
